@@ -116,9 +116,6 @@ def check_zone_unlock(
     return available >= needed_base
 
 
-GRINDY_ZONE_ORDER = [3, 6, 8]  # progression order
-
-
 def _add_inventories(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     result = dict(a)
     for k, v in b.items():
@@ -139,9 +136,8 @@ def build_curve(
     puzzle_zone = data.zones[puzzle_zone_id]
     unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
 
-    # Grindy zones that come before this one in progression (simulated at 100%)
-    idx = GRINDY_ZONE_ORDER.index(grindy_zone_id) if grindy_zone_id in GRINDY_ZONE_ORDER else 0
-    prior_zone_ids = GRINDY_ZONE_ORDER[:idx]
+    # All zones before the current grindy zone contribute inventory at 100%
+    prior_zone_ids = list(range(1, grindy_zone_id))
 
     rng = np.random.default_rng()
     curve: dict[int, float] = {}
@@ -150,7 +146,7 @@ def build_curve(
         grinding_pct = pct_int / 100
         successes = 0
         for _ in range(n_simulations):
-            # Accumulate inventory from all prior grindy zones at 100%
+            # Accumulate inventory from all prior zones at 100%
             inv: dict[str, int] = {}
             for prior_id in prior_zone_ids:
                 prior_inv = simulate_harvest(
