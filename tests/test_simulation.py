@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from data import load_data, ZoneData, MergeChain
-from simulation import simulate_harvest, check_puzzle_completion
+from data import load_data, ZoneData, MergeChain, ZoneUnlock
+from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, build_curve
 
 EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
@@ -85,3 +85,52 @@ def test_partial_completion():
                     composition={"item_1": 20.0})  # 4 tiles
     assert check_puzzle_completion({"item_1": 4}, zone, 0.5, [chain]) is True
     assert check_puzzle_completion({"item_1": 4}, zone, 1.0, [chain]) is False
+
+
+# --- check_zone_unlock tests ---
+
+
+def test_no_unlock_required_passes():
+    unlock = ZoneUnlock(zone_id=3, required_currency_level=None)
+    cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
+    assert check_zone_unlock({}, unlock, cc) is True
+
+
+def test_unlock_with_exact_currency():
+    unlock = ZoneUnlock(zone_id=2, required_currency_level=4)
+    cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
+    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 27}, unlock, cc) is True
+
+
+def test_unlock_insufficient_currency():
+    unlock = ZoneUnlock(zone_id=2, required_currency_level=4)
+    cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
+    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 26}, unlock, cc) is False
+
+
+def test_unlock_with_higher_level_currency():
+    unlock = ZoneUnlock(zone_id=2, required_currency_level=4)
+    cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
+    assert check_zone_unlock({"Event_LakeCottage_Currency_4": 1}, unlock, cc) is True
+
+
+# --- build_curve tests ---
+
+
+def test_build_curve_is_monotone(game_data):
+    curve = build_curve(3, 4, 0.5, 3, 5, 300, game_data)
+    values = [curve[k] for k in sorted(curve.keys())]
+    for i in range(1, len(values)):
+        assert values[i] >= values[i - 1] - 0.15
+
+
+def test_build_curve_zero_grinding_near_zero(game_data):
+    curve = build_curve(3, 4, 0.5, 3, 5, 500, game_data)
+    assert curve[0] < 0.10
+
+
+def test_build_curve_full_grinding_high_success(game_data):
+    # Zone 5 has Crystal/Tower items not yielded by zone 3 harvest.
+    # At 10% required only ancient_object and flower items are needed, which are harvestable.
+    curve = build_curve(3, 5, 0.1, 3, 5, 500, game_data)
+    assert curve[100] > 0.50

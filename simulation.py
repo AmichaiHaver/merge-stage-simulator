@@ -95,3 +95,55 @@ def check_puzzle_completion(
                 break
 
     return True
+
+
+def check_zone_unlock(
+    inventory: dict[str, int],
+    zone_unlock: ZoneUnlock,
+    currency_chain: MergeChain,
+) -> bool:
+    if zone_unlock.required_currency_level is None:
+        return True
+
+    k = zone_unlock.required_currency_level
+    needed_base = 3 ** (k - 1)
+
+    available = sum(
+        inventory.get(item, 0) * (3 ** i)
+        for i, item in enumerate(currency_chain.items)
+    )
+    return available >= needed_base
+
+
+def build_curve(
+    grindy_zone_id: int,
+    puzzle_zone_id: int,
+    required_merge_pct: float,
+    currency_per_harvest_away: int,
+    harvest_away_max_harvests: int,
+    n_simulations: int,
+    data: GameData,
+) -> dict[int, float]:
+    grindy_zone = data.zones[grindy_zone_id]
+    puzzle_zone = data.zones[puzzle_zone_id]
+    unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
+
+    rng = np.random.default_rng()
+    curve: dict[int, float] = {}
+
+    for pct_int in range(0, 105, 5):
+        grinding_pct = pct_int / 100
+        successes = 0
+        for _ in range(n_simulations):
+            inv = simulate_harvest(
+                grindy_zone, grinding_pct,
+                currency_per_harvest_away, harvest_away_max_harvests,
+                data, rng,
+            )
+            ok = check_puzzle_completion(inv, puzzle_zone, required_merge_pct, data.chains)
+            ok = ok and check_zone_unlock(inv, unlock, data.currency_chain)
+            if ok:
+                successes += 1
+        curve[pct_int] = successes / n_simulations
+
+    return curve
