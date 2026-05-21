@@ -2,7 +2,7 @@ from __future__ import annotations
 import streamlit as st
 import plotly.graph_objects as go
 from data import load_data
-from simulation import build_curve
+from simulation import build_curve, build_bottleneck_report
 
 st.set_page_config(page_title="Merge Stage Simulator", layout="wide")
 st.title("Merge Stage Simulator — LakeCottage")
@@ -90,3 +90,45 @@ st.subheader("Key Thresholds")
 cols = st.columns(5)
 for col, pct in zip(cols, [10, 25, 40, 60, 80]):
     col.metric(f"{pct}% Grinding", f"{curve.get(pct, 0) * 100:.1f}%")
+
+# ── Bottleneck analysis ───────────────────────────────────────────────────
+st.divider()
+st.subheader("Bottleneck Analysis")
+
+bt_pct = st.slider("Analyze at grinding %", 0, 100, 40, 5)
+
+with st.spinner("Analyzing bottlenecks…"):
+    report = build_bottleneck_report(
+        grindy_zone_id=grindy_id,
+        puzzle_zone_id=puzzle_id,
+        required_merge_pct=required_pcts[puzzle_id],
+        harvest_away_max_harvests=int(harvest_away_harvests),
+        n_simulations=min(n_sims, 500),
+        grinding_pct=bt_pct / 100,
+        data=data,
+    )
+
+c1, c2 = st.columns(2)
+c1.metric("🔒 Zone unlock failures", f"{report.unlock_fail_rate * 100:.1f}%",
+          help="% of simulations where player couldn't unlock the zone")
+c2.metric("🧩 Puzzle completion failures", f"{report.puzzle_fail_rate * 100:.1f}%",
+          help="% of simulations where player lacked items to merge")
+
+if report.missing_item_rates:
+    st.markdown("**Items blocking puzzle completion** (fraction of simulations where each item was missing):")
+    sorted_missing = sorted(report.missing_item_rates.items(), key=lambda x: -x[1])
+    fig2 = go.Figure(go.Bar(
+        x=[f"{pct * 100:.0f}%" for _, pct in sorted_missing],
+        y=[item.split("Competition_")[-1] if "Competition_" in item else item
+           for item, _ in sorted_missing],
+        orientation="h",
+        marker_color="#e74c3c",
+    ))
+    fig2.update_layout(
+        height=max(200, len(sorted_missing) * 30 + 80),
+        margin=dict(l=200, r=20, t=20, b=40),
+        xaxis_title="Fraction of simulations blocked",
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+else:
+    st.success("No puzzle completion bottlenecks at this grinding level.")

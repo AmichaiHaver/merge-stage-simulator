@@ -1,11 +1,20 @@
 from __future__ import annotations
 import math
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
 
 from data import GameData, ZoneData, MergeChain, ZoneUnlock
+
+
+@dataclass
+class BottleneckReport:
+    grinding_pct: float
+    unlock_fail_rate: float
+    puzzle_fail_rate: float
+    missing_item_rates: dict[str, float] = field(default_factory=dict)
 
 HARVEST_AWAY_PREFIX = "Event_LakeCottage_HarvestAway_"
 CURRENCY_MERGE_RATIO = 2.5  # 5 currency items → 2 at next level
@@ -185,3 +194,97 @@ def build_curve(
         curve[pct_int] = successes / n_simulations
 
     return curve
+
+
+def _check_puzzle_with_missing(
+    inventory: dict[str, int],
+    puzzle_zone: ZoneData,
+    required_merge_pct: float,
+    chains: list[MergeChain],
+) -> tuple[bool, list[str]]:
+    inv = dict(inventory)
+    puzzle_items: list[tuple[int, MergeChain, str]] = []
+    for prefab, zone_pct in puzzle_zone.composition.items():
+        count = max(1, round((zone_pct / 100) * puzzle_zone.tile_count))
+        for chain in chains:
+            if prefab in chain.items:
+                level = chain.items.index(prefab)
+                puzzle_items.extend([(level, chain, prefab)] * count)
+                break
+
+    if not puzzle_items:
+        return True, []
+
+    puzzle_items.sort(key=lambda x: x[0])
+    required_count = math.ceil(len(puzzle_items) * required_merge_pct)
+    missing: list[str] = []
+
+    for level, chain, prefab in puzzle_items[:required_count]:
+        cost_base = 2 * (3 ** max(0, level - 1))
+        available_base = sum(
+            inv.get(chain.items[l], 0) * (3 ** l)
+            for l in range(min(level + 1, len(chain.items)))
+        )
+        if available_base < cost_base:
+            missing.append(prefab)
+            continue
+
+        remaining = cost_base
+        for l in range(level, -1, -1):
+            item = chain.items[l]
+            unit_val = 3 ** l
+            can_take = min(inv.get(item, 0), remaining // unit_val)
+            inv[item] = inv.get(item, 0) - can_take
+            remaining -= can_take * unit_val
+            if remaining == 0:
+                break
+
+    return len(missing) == 0, missing
+
+
+def build_bottleneck_report(
+    grindy_zone_id: int,
+    puzzle_zone_id: int,
+    required_merge_pct: float,
+    harvest_away_max_harvests: int,
+    n_simulations: int,
+    grinding_pct: float,
+    data: GameData,
+) -> BottleneckReport:
+    grindy_zone = data.zones[grindy_zone_id]
+    puzzle_zone = data.zones[puzzle_zone_id]
+    unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
+    prior_zone_ids = list(range(1, grindy_zone_id))
+
+    rng = np.random.default_rng()
+    unlock_failures = 0
+    puzzle_failures = 0
+    missing_counts: dict[str, int] = defaultdict(int)
+
+    for _ in range(n_simulations):
+        inv: dict[str, int] = {}
+        for prior_id in prior_zone_ids:
+            inv = _add_inventories(
+                inv,
+                simulate_harvest(data.zones[prior_id], 1.0, harvest_away_max_harvests, data, rng),
+            )
+        inv = _add_inventories(
+            inv,
+            simulate_harvest(grindy_zone, grinding_pct, harvest_away_max_harvests, data, rng),
+        )
+
+        if not check_zone_unlock(inv, unlock, data.currency_chain):
+            unlock_failures += 1
+
+        ok, missing = _check_puzzle_with_missing(inv, puzzle_zone, required_merge_pct, data.chains)
+        if not ok:
+            puzzle_failures += 1
+            for item in missing:
+                missing_counts[item] += 1
+
+    return BottleneckReport(
+        grinding_pct=grinding_pct,
+        unlock_fail_rate=unlock_failures / n_simulations,
+        puzzle_fail_rate=puzzle_failures / n_simulations,
+        missing_item_rates={k: v / n_simulations for k, v in missing_counts.items()},
+    )
