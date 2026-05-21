@@ -116,6 +116,16 @@ def check_zone_unlock(
     return available >= needed_base
 
 
+GRINDY_ZONE_ORDER = [3, 6, 8]  # progression order
+
+
+def _add_inventories(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
+    result = dict(a)
+    for k, v in b.items():
+        result[k] = result.get(k, 0) + v
+    return result
+
+
 def build_curve(
     grindy_zone_id: int,
     puzzle_zone_id: int,
@@ -129,6 +139,10 @@ def build_curve(
     puzzle_zone = data.zones[puzzle_zone_id]
     unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
 
+    # Grindy zones that come before this one in progression (simulated at 100%)
+    idx = GRINDY_ZONE_ORDER.index(grindy_zone_id) if grindy_zone_id in GRINDY_ZONE_ORDER else 0
+    prior_zone_ids = GRINDY_ZONE_ORDER[:idx]
+
     rng = np.random.default_rng()
     curve: dict[int, float] = {}
 
@@ -136,10 +150,23 @@ def build_curve(
         grinding_pct = pct_int / 100
         successes = 0
         for _ in range(n_simulations):
-            inv = simulate_harvest(
-                grindy_zone, grinding_pct,
-                currency_per_harvest_away, harvest_away_max_harvests,
-                data, rng,
+            # Accumulate inventory from all prior grindy zones at 100%
+            inv: dict[str, int] = {}
+            for prior_id in prior_zone_ids:
+                prior_inv = simulate_harvest(
+                    data.zones[prior_id], 1.0,
+                    currency_per_harvest_away, harvest_away_max_harvests,
+                    data, rng,
+                )
+                inv = _add_inventories(inv, prior_inv)
+            # Current grindy zone at variable %
+            inv = _add_inventories(
+                inv,
+                simulate_harvest(
+                    grindy_zone, grinding_pct,
+                    currency_per_harvest_away, harvest_away_max_harvests,
+                    data, rng,
+                ),
             )
             ok = check_puzzle_completion(inv, puzzle_zone, required_merge_pct, data.chains)
             ok = ok and check_zone_unlock(inv, unlock, data.currency_chain)
