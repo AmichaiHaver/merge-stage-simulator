@@ -50,3 +50,48 @@ def simulate_harvest(
                 inventory[names[idx]] += 1
 
     return dict(inventory)
+
+
+def check_puzzle_completion(
+    inventory: dict[str, int],
+    puzzle_zone: ZoneData,
+    required_merge_pct: float,
+    chains: list[MergeChain],
+) -> bool:
+    inv = dict(inventory)
+
+    puzzle_items: list[tuple[int, MergeChain]] = []
+    for prefab, zone_pct in puzzle_zone.composition.items():
+        count = max(1, round((zone_pct / 100) * puzzle_zone.tile_count))
+        for chain in chains:
+            if prefab in chain.items:
+                level = chain.items.index(prefab)
+                puzzle_items.extend([(level, chain)] * count)
+                break
+
+    if not puzzle_items:
+        return True
+
+    puzzle_items.sort(key=lambda x: x[0])
+    required_count = math.ceil(len(puzzle_items) * required_merge_pct)
+
+    for level, chain in puzzle_items[:required_count]:
+        cost_base = 2 * (3 ** max(0, level - 1))
+        available_base = sum(
+            inv.get(chain.items[l], 0) * (3 ** l)
+            for l in range(min(level + 1, len(chain.items)))
+        )
+        if available_base < cost_base:
+            return False
+
+        remaining = cost_base
+        for l in range(level, -1, -1):
+            item = chain.items[l]
+            unit_val = 3 ** l
+            can_take = min(inv.get(item, 0), remaining // unit_val)
+            inv[item] = inv.get(item, 0) - can_take
+            remaining -= can_take * unit_val
+            if remaining == 0:
+                break
+
+    return True
