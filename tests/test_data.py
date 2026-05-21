@@ -105,3 +105,37 @@ def test_default_item_probability():
     data = load_data(EXCEL)
     lt = data.loot_tables["Loot_HarvestSmallBrambles_GERevamp"]
     assert abs(lt.default_probability - 0.2) < 0.001
+
+
+def test_puzzle_chains_count():
+    data = load_data(EXCEL)
+    assert len(data.chains) == 4
+
+
+def test_ancient_object_chain():
+    data = load_data(EXCEL)
+    chain = next(c for c in data.chains if "ancient_object_1" in c.items[0])
+    assert chain.items[0] == "Competition_ancient_object_1"
+    assert chain.items[9] == "Competition_ancient_object_10"
+    assert len(chain.items) == 10
+
+
+def test_currency_chain():
+    data = load_data(EXCEL)
+    assert data.currency_chain.items[0] == "Event_LakeCottage_Currency_1"
+    assert data.currency_chain.items[9] == "Event_LakeCottage_Currency_10"
+    assert len(data.currency_chain.items) == 10
+
+
+def test_zone_unlocks_parsed():
+    data = load_data(EXCEL)
+    assert data.zone_unlocks[2].required_currency_level == 4
+    assert data.zone_unlocks[4].required_currency_level == 7
+    assert data.zone_unlocks[6].required_currency_level == 9
+    assert data.zone_unlocks[8].required_currency_level == 10
+
+
+def test_zones_without_unlock():
+    data = load_data(EXCEL)
+    for zone_id in [1, 3, 5, 7, 9]:
+        assert data.zone_unlocks[zone_id].required_currency_level is None

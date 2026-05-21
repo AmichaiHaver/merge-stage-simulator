@@ -174,9 +174,48 @@ def _parse_plants_and_loot(wb) -> tuple[dict[str, Plant], dict[str, LootTable]]:
     return plants, loot_tables
 
 
-def _parse_chains(wb):
-    return [], MergeChain(name="Discovery Chain", items=[])
+def _parse_chains(wb) -> tuple[list[MergeChain], MergeChain]:
+    item_ws = wb["Item Database"]
+    chain_items: dict[str, list[str]] = {}
+    currency_items: list[str] = []
+
+    for row in item_ws.iter_rows(min_row=2, max_row=item_ws.max_row, values_only=True):
+        chain_name = row[0]
+        prefab = row[3]
+        mergeable = row[4]
+
+        if not prefab or not chain_name:
+            continue
+
+        if str(chain_name) == "Discovery Chain":
+            currency_items.append(str(prefab))
+        elif mergeable == "x" and str(chain_name) in PUZZLE_CHAIN_NAMES:
+            if chain_name not in chain_items:
+                chain_items[str(chain_name)] = []
+            chain_items[str(chain_name)].append(str(prefab))
+
+    chains = [MergeChain(name=name, items=items) for name, items in chain_items.items()]
+    currency_chain = MergeChain(name="Discovery Chain", items=currency_items)
+    return chains, currency_chain
 
 
-def _parse_zone_unlocks(wb):
-    return {}
+def _parse_zone_unlocks(wb) -> dict[int, ZoneUnlock]:
+    ws = wb["Zone unlock"]
+    unlocks: dict[int, ZoneUnlock] = {}
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+        if row[1] is None:
+            continue
+        try:
+            zone_id = int(row[1])
+        except (ValueError, TypeError):
+            continue
+        item = row[2]
+
+        if item:
+            level = int(str(item).split("_")[-1])
+            unlocks[zone_id] = ZoneUnlock(zone_id=zone_id, required_currency_level=level)
+        else:
+            unlocks[zone_id] = ZoneUnlock(zone_id=zone_id, required_currency_level=None)
+
+    return unlocks
