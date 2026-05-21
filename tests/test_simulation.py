@@ -18,26 +18,30 @@ def rng():
 
 def test_zero_grinding_yields_empty(game_data, rng):
     zone3 = game_data.zones[3]
-    inv = simulate_harvest(zone3, 0.0, 3, 5, game_data, rng)
+    inv = simulate_harvest(zone3, 0.0, 20, game_data, rng)
     assert sum(inv.values()) == 0
 
 
 def test_full_grinding_yields_items(game_data, rng):
     zone3 = game_data.zones[3]
-    inv = simulate_harvest(zone3, 1.0, 3, 5, game_data, rng)
+    inv = simulate_harvest(zone3, 1.0, 20, game_data, rng)
     assert sum(inv.values()) > 50
 
 
 def test_harvest_gives_currency_from_harvest_away(game_data, rng):
     zone3 = game_data.zones[3]
-    inv = simulate_harvest(zone3, 1.0, 3, 5, game_data, rng)
-    assert inv.get("Event_LakeCottage_Currency_1", 0) > 0
+    inv = simulate_harvest(zone3, 1.0, 20, game_data, rng)
+    # Zone 3 (tier 1-3) drops Currency_1/2/3 — check any currency present
+    total_currency = sum(
+        inv.get(f"Event_LakeCottage_Currency_{i}", 0) for i in range(1, 4)
+    )
+    assert total_currency > 0
 
 
 def test_partial_grinding_scales_proportionally(game_data):
     zone3 = game_data.zones[3]
-    inv_50 = simulate_harvest(zone3, 0.5, 3, 5, game_data, np.random.default_rng(99))
-    inv_100 = simulate_harvest(zone3, 1.0, 3, 5, game_data, np.random.default_rng(99))
+    inv_50 = simulate_harvest(zone3, 0.5, 20, game_data, np.random.default_rng(99))
+    inv_100 = simulate_harvest(zone3, 1.0, 20, game_data, np.random.default_rng(99))
     assert sum(inv_50.values()) < sum(inv_100.values())
 
 
@@ -119,19 +123,19 @@ def test_unlock_with_higher_level_currency():
 
 
 def test_build_curve_is_monotone(game_data):
-    curve = build_curve(3, 4, 0.5, 3, 5, 300, game_data)
+    curve = build_curve(3, 4, 0.5, 20, 300, game_data)
     values = [curve[k] for k in sorted(curve.keys())]
     for i in range(1, len(values)):
         assert values[i] >= values[i - 1] - 0.15
 
 
 def test_build_curve_zero_grinding_near_zero(game_data):
-    curve = build_curve(3, 4, 0.5, 3, 5, 500, game_data)
+    # At 0% grinding of zone 3, player has no ancient_object/flower → puzzle completion fails
+    curve = build_curve(3, 4, 0.5, 20, 500, game_data)
     assert curve[0] < 0.10
 
 
 def test_build_curve_full_grinding_high_success(game_data):
-    # Zone 5 has Crystal/Tower items not yielded by zone 3 harvest.
-    # At 10% required only ancient_object and flower items are needed, which are harvestable.
-    curve = build_curve(3, 5, 0.1, 3, 5, 500, game_data)
+    # Zone 5, 10% required — only ancient_object/flower needed, which are harvestable
+    curve = build_curve(3, 5, 0.1, 20, 500, game_data)
     assert curve[100] > 0.50

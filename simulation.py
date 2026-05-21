@@ -11,10 +11,18 @@ HARVEST_AWAY_PREFIX = "Event_LakeCottage_HarvestAway_"
 CURRENCY_MERGE_RATIO = 2.5  # 5 currency items → 2 at next level
 
 
+def _harvest_away_base_currency_level(zone_id: int) -> int:
+    """Zones 1-3 → base 1, zones 4-6 → base 2, zones 7-9 → base 3."""
+    if zone_id <= 3:
+        return 1
+    elif zone_id <= 6:
+        return 2
+    return 3
+
+
 def simulate_harvest(
     grindy_zone: ZoneData,
     grinding_pct: float,             # 0.0–1.0
-    currency_per_harvest_away: int,  # Currency_1 per HarvestAway harvest
     harvest_away_max_harvests: int,  # max harvests per HarvestAway item
     data: GameData,
     rng: np.random.Generator,
@@ -27,10 +35,17 @@ def simulate_harvest(
             continue
 
         if prefab.startswith(HARVEST_AWAY_PREFIX):
-            currency_key = "Event_LakeCottage_Currency_1"
-            inventory[currency_key] += (
-                n_items * harvest_away_max_harvests * currency_per_harvest_away
-            )
+            base = _harvest_away_base_currency_level(grindy_zone.zone_id)
+            levels = [base, base + 1, base + 2]
+            currency_items = [
+                data.currency_chain.items[lvl - 1]
+                for lvl in levels
+                if lvl - 1 < len(data.currency_chain.items)
+            ]
+            total_harvests = n_items * harvest_away_max_harvests
+            chosen = rng.integers(0, len(currency_items), size=total_harvests)
+            for idx in chosen:
+                inventory[currency_items[idx]] += 1
 
         elif prefab in data.plants:
             plant = data.plants[prefab]
@@ -127,7 +142,6 @@ def build_curve(
     grindy_zone_id: int,
     puzzle_zone_id: int,
     required_merge_pct: float,
-    currency_per_harvest_away: int,
     harvest_away_max_harvests: int,
     n_simulations: int,
     data: GameData,
@@ -151,7 +165,7 @@ def build_curve(
             for prior_id in prior_zone_ids:
                 prior_inv = simulate_harvest(
                     data.zones[prior_id], 1.0,
-                    currency_per_harvest_away, harvest_away_max_harvests,
+                    harvest_away_max_harvests,
                     data, rng,
                 )
                 inv = _add_inventories(inv, prior_inv)
@@ -160,7 +174,7 @@ def build_curve(
                 inv,
                 simulate_harvest(
                     grindy_zone, grinding_pct,
-                    currency_per_harvest_away, harvest_away_max_harvests,
+                    harvest_away_max_harvests,
                     data, rng,
                 ),
             )

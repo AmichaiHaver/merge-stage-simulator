@@ -23,11 +23,8 @@ st.sidebar.header("Simulation Parameters")
 n_sims = st.sidebar.slider("Simulations (higher = slower but smoother)", 200, 5000, 1000, 200)
 
 st.sidebar.subheader("HarvestAway (Discovery Chain)")
-currency_per_harvest = st.sidebar.number_input(
-    "Currency_1 per HarvestAway harvest", min_value=1, max_value=30, value=1
-)
 harvest_away_harvests = st.sidebar.number_input(
-    "Max harvests per HarvestAway item", min_value=1, max_value=30, value=5
+    "Max harvests per HarvestAway item", min_value=1, max_value=50, value=20
 )
 
 st.sidebar.subheader("Puzzle Zone — Required Merge %")
@@ -50,7 +47,6 @@ with st.spinner(f"Running {n_sims:,} simulations…"):
         grindy_zone_id=grindy_id,
         puzzle_zone_id=puzzle_id,
         required_merge_pct=required_pcts[puzzle_id],
-        currency_per_harvest_away=int(currency_per_harvest),
         harvest_away_max_harvests=int(harvest_away_harvests),
         n_simulations=n_sims,
         data=data,
