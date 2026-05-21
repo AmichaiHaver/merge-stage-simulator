@@ -8,6 +8,7 @@ import numpy as np
 from data import GameData, ZoneData, MergeChain, ZoneUnlock
 
 HARVEST_AWAY_PREFIX = "Event_LakeCottage_HarvestAway_"
+CURRENCY_MERGE_RATIO = 2.5  # 5 currency items → 2 at next level
 
 
 def simulate_harvest(
@@ -106,10 +107,10 @@ def check_zone_unlock(
         return True
 
     k = zone_unlock.required_currency_level
-    needed_base = 3 ** (k - 1)
+    needed_base = CURRENCY_MERGE_RATIO ** (k - 1)
 
     available = sum(
-        inventory.get(item, 0) * (3 ** i)
+        inventory.get(item, 0) * (CURRENCY_MERGE_RATIO ** i)
         for i, item in enumerate(currency_chain.items)
     )
     return available >= needed_base

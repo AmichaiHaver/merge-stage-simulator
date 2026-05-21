@@ -97,15 +97,16 @@ def test_no_unlock_required_passes():
 
 
 def test_unlock_with_exact_currency():
+    # Currency_4 needs 2.5^3 = 15.625 base units → need at least 16 Currency_1
     unlock = ZoneUnlock(zone_id=2, required_currency_level=4)
     cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
-    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 27}, unlock, cc) is True
+    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 16}, unlock, cc) is True
 
 
 def test_unlock_insufficient_currency():
     unlock = ZoneUnlock(zone_id=2, required_currency_level=4)
     cc = _make_chain([f"Event_LakeCottage_Currency_{i}" for i in range(1, 11)])
-    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 26}, unlock, cc) is False
+    assert check_zone_unlock({"Event_LakeCottage_Currency_1": 15}, unlock, cc) is False
 
 
 def test_unlock_with_higher_level_currency():

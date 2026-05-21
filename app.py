@@ -24,7 +24,7 @@ n_sims = st.sidebar.slider("Simulations (higher = slower but smoother)", 200, 50
 
 st.sidebar.subheader("HarvestAway (Discovery Chain)")
 currency_per_harvest = st.sidebar.number_input(
-    "Currency_1 per HarvestAway harvest", min_value=1, max_value=30, value=3
+    "Currency_1 per HarvestAway harvest", min_value=1, max_value=30, value=1
 )
 harvest_away_harvests = st.sidebar.number_input(
     "Max harvests per HarvestAway item", min_value=1, max_value=30, value=5
