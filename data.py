@@ -115,9 +115,63 @@ def _parse_zones(wb) -> dict[int, ZoneData]:
     return zones
 
 
-# Stub implementations so load_data() doesn't crash yet
-def _parse_plants_and_loot(wb):
-    return {}, {}
+def _parse_plants_and_loot(wb) -> tuple[dict[str, Plant], dict[str, LootTable]]:
+    item_ws = wb["Item Database"]
+    plants: dict[str, Plant] = {}
+
+    for row in item_ws.iter_rows(min_row=2, max_row=item_ws.max_row, values_only=True):
+        prefab = row[3]
+        harvestable = row[5]
+        harvest_time = row[7]
+        harvest_count = row[9]
+
+        if prefab and harvestable == "x" and harvest_time and harvest_count:
+            plants[str(prefab)] = Plant(
+                prefab=str(prefab),
+                harvest_time=float(harvest_time),
+                max_harvests=int(harvest_count),
+                loot_table_name="",
+            )
+
+    loot_ws = wb["Generator LootTable"]
+    loot_tables: dict[str, LootTable] = {}
+
+    for row in loot_ws.iter_rows(min_row=2, max_row=loot_ws.max_row, values_only=True):
+        if not row[0]:
+            continue
+        main_prefab = str(row[0])
+        lt_name = str(row[1]) if row[1] else main_prefab
+        default_item = str(row[2]) if row[2] else ""
+        default_prob = float(row[4]) if row[4] else 0.0
+
+        entries: list[LootEntry] = []
+        for i in range(7):
+            item_col = 5 + i * 4
+            input_col = 8 + i * 4   # #INPUT column (NOT Chance column at 7+i*4)
+            if item_col < len(row) and input_col < len(row):
+                item_val = row[item_col]
+                prob_val = row[input_col]
+                if item_val and prob_val:
+                    entries.append(LootEntry(item=str(item_val), probability=float(prob_val)))
+
+        lt = LootTable(
+            name=lt_name,
+            default_item=default_item,
+            default_probability=default_prob,
+            entries=entries,
+        )
+        loot_tables[lt_name] = lt
+
+        if main_prefab in plants:
+            old = plants[main_prefab]
+            plants[main_prefab] = Plant(
+                prefab=old.prefab,
+                harvest_time=old.harvest_time,
+                max_harvests=old.max_harvests,
+                loot_table_name=lt_name,
+            )
+
+    return plants, loot_tables
 
 
 def _parse_chains(wb):

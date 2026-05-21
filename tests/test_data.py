@@ -58,3 +58,50 @@ def test_zone_data_composition():
     )
     assert z.tile_count == 60
     assert z.composition["SmallBrambles"] == 10.0
+
+
+def test_bramble_plants_parsed():
+    data = load_data(EXCEL)
+    assert "SmallBrambles" in data.plants
+    assert "Brambles" in data.plants
+    assert "Large_Brambles" in data.plants
+    assert "Curly_Small_Brambles" in data.plants
+
+
+def test_plant_harvest_counts():
+    data = load_data(EXCEL)
+    assert data.plants["SmallBrambles"].max_harvests == 20
+    assert data.plants["Brambles"].max_harvests == 15
+    assert data.plants["Large_Brambles"].max_harvests == 30
+    assert data.plants["Curly_Small_Brambles"].max_harvests == 15
+    assert data.plants["Curly_Brambles"].max_harvests == 10
+    assert data.plants["Curly_Large_Brambles"].max_harvests == 20
+
+
+def test_plant_has_loot_table():
+    data = load_data(EXCEL)
+    plant = data.plants["SmallBrambles"]
+    assert plant.loot_table_name != ""
+    assert plant.loot_table_name in data.loot_tables
+
+
+def test_loot_table_entries():
+    data = load_data(EXCEL)
+    lt = data.loot_tables["Loot_HarvestSmallBrambles_GERevamp"]
+    item_names = [e.item for e in lt.entries]
+    assert "Competition_flower_2" in item_names
+    assert "Competition_ancient_object_1" in item_names
+    assert "Event_LakeCottage_Point_1" in item_names
+
+
+def test_loot_probabilities_sum_to_one():
+    data = load_data(EXCEL)
+    lt = data.loot_tables["Loot_HarvestSmallBrambles_GERevamp"]
+    total = lt.default_probability + sum(e.probability for e in lt.entries)
+    assert abs(total - 1.0) < 0.01
+
+
+def test_default_item_probability():
+    data = load_data(EXCEL)
+    lt = data.loot_tables["Loot_HarvestSmallBrambles_GERevamp"]
+    assert abs(lt.default_probability - 0.2) < 0.001
