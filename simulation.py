@@ -16,8 +16,16 @@ class BottleneckReport:
     puzzle_fail_rate: float
     missing_item_rates: dict[str, float] = field(default_factory=dict)
 
+
+@dataclass
+class CurveResult:
+    success_rates: dict[int, float]   # pct_int -> fraction [0, 1]
+    avg_points: dict[int, float]      # pct_int -> average total score
+
+
 HARVEST_AWAY_PREFIX = "Event_LakeCottage_HarvestAway_"
 CURRENCY_MERGE_RATIO = 2.5  # 5 currency items → 2 at next level
+_PCT_STEPS = [p / 100 for p in range(5, 105, 5)]  # 0.05 .. 1.00
 
 
 def _harvest_away_base_currency_level(zone_id: int) -> int:
@@ -147,6 +155,79 @@ def _add_inventories(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
     return result
 
 
+def _compute_score(inventory: dict[str, int], point_values: dict[str, int]) -> float:
+    return sum(inventory.get(prefab, 0) * val for prefab, val in point_values.items())
+
+
+def _downstream_puzzle_ids(grindy_zone_id: int, zones: dict[int, ZoneData]) -> list[int]:
+    """Consecutive puzzle zones after grindy_zone_id, stop at next grindy or end."""
+    result = []
+    for zid in range(grindy_zone_id + 1, max(zones.keys()) + 1):
+        z = zones.get(zid)
+        if z is None or z.zone_type == "Grindy":
+            break
+        if z.zone_type == "Puzzle":
+            result.append(zid)
+    return result
+
+
+def _find_min_pct_for_prior_grindy(
+    prior_grindy_id: int,
+    cumulative_inv: dict[str, int],
+    harvest_away_max_harvests: int,
+    data: GameData,
+    rng: np.random.Generator,
+) -> float:
+    """Minimum grinding % at which downstream puzzle zones are 100%-completable + unlockable."""
+    downstream_ids = _downstream_puzzle_ids(prior_grindy_id, data.zones)
+    for pct in _PCT_STEPS:
+        trial_inv = _add_inventories(
+            cumulative_inv,
+            simulate_harvest(data.zones[prior_grindy_id], pct,
+                             harvest_away_max_harvests, data, rng),
+        )
+        if all(
+            check_puzzle_completion(trial_inv, data.zones[pz_id], 1.0, data.chains)
+            and check_zone_unlock(
+                trial_inv,
+                data.zone_unlocks.get(pz_id, ZoneUnlock(pz_id, None)),
+                data.currency_chain,
+            )
+            for pz_id in downstream_ids
+        ):
+            return pct
+    return 1.0
+
+
+def _accumulate_prior_zones(
+    grindy_zone_id: int,
+    harvest_away_max_harvests: int,
+    data: GameData,
+    rng: np.random.Generator,
+) -> dict[str, int]:
+    """Simulate all zones before grindy_zone_id: non-grindy at 100%, grindy at min sufficient %."""
+    prior_zone_ids = list(range(1, grindy_zone_id))
+    prior_grindy_ids = sorted(z for z in prior_zone_ids if data.zones[z].zone_type == "Grindy")
+    prior_non_grindy_ids = [z for z in prior_zone_ids if data.zones[z].zone_type != "Grindy"]
+
+    inv: dict[str, int] = {}
+    for prior_id in prior_non_grindy_ids:
+        inv = _add_inventories(
+            inv,
+            simulate_harvest(data.zones[prior_id], 1.0, harvest_away_max_harvests, data, rng),
+        )
+    for prior_grindy_id in prior_grindy_ids:
+        min_pct = _find_min_pct_for_prior_grindy(
+            prior_grindy_id, inv, harvest_away_max_harvests, data, rng,
+        )
+        inv = _add_inventories(
+            inv,
+            simulate_harvest(data.zones[prior_grindy_id], min_pct,
+                             harvest_away_max_harvests, data, rng),
+        )
+    return inv
+
+
 def build_curve(
     grindy_zone_id: int,
     puzzle_zone_id: int,
@@ -154,46 +235,36 @@ def build_curve(
     harvest_away_max_harvests: int,
     n_simulations: int,
     data: GameData,
-) -> dict[int, float]:
+) -> CurveResult:
     grindy_zone = data.zones[grindy_zone_id]
     puzzle_zone = data.zones[puzzle_zone_id]
     unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
 
-    # All zones before the current grindy zone contribute inventory at 100%
-    prior_zone_ids = list(range(1, grindy_zone_id))
-
     rng = np.random.default_rng()
-    curve: dict[int, float] = {}
+    success_rates: dict[int, float] = {}
+    avg_points: dict[int, float] = {}
 
     for pct_int in range(0, 105, 5):
         grinding_pct = pct_int / 100
         successes = 0
+        total_score = 0.0
+
         for _ in range(n_simulations):
-            # Accumulate inventory from all prior zones at 100%
-            inv: dict[str, int] = {}
-            for prior_id in prior_zone_ids:
-                prior_inv = simulate_harvest(
-                    data.zones[prior_id], 1.0,
-                    harvest_away_max_harvests,
-                    data, rng,
-                )
-                inv = _add_inventories(inv, prior_inv)
-            # Current grindy zone at variable %
+            inv = _accumulate_prior_zones(grindy_zone_id, harvest_away_max_harvests, data, rng)
             inv = _add_inventories(
                 inv,
-                simulate_harvest(
-                    grindy_zone, grinding_pct,
-                    harvest_away_max_harvests,
-                    data, rng,
-                ),
+                simulate_harvest(grindy_zone, grinding_pct, harvest_away_max_harvests, data, rng),
             )
             ok = check_puzzle_completion(inv, puzzle_zone, required_merge_pct, data.chains)
             ok = ok and check_zone_unlock(inv, unlock, data.currency_chain)
             if ok:
                 successes += 1
-        curve[pct_int] = successes / n_simulations
+            total_score += _compute_score(inv, data.point_values)
 
-    return curve
+        success_rates[pct_int] = successes / n_simulations
+        avg_points[pct_int] = total_score / n_simulations
+
+    return CurveResult(success_rates=success_rates, avg_points=avg_points)
 
 
 def _check_puzzle_with_missing(
@@ -254,7 +325,6 @@ def build_bottleneck_report(
     grindy_zone = data.zones[grindy_zone_id]
     puzzle_zone = data.zones[puzzle_zone_id]
     unlock = data.zone_unlocks.get(puzzle_zone_id, ZoneUnlock(puzzle_zone_id, None))
-    prior_zone_ids = list(range(1, grindy_zone_id))
 
     rng = np.random.default_rng()
     unlock_failures = 0
@@ -262,12 +332,7 @@ def build_bottleneck_report(
     missing_counts: dict[str, int] = defaultdict(int)
 
     for _ in range(n_simulations):
-        inv: dict[str, int] = {}
-        for prior_id in prior_zone_ids:
-            inv = _add_inventories(
-                inv,
-                simulate_harvest(data.zones[prior_id], 1.0, harvest_away_max_harvests, data, rng),
-            )
+        inv = _accumulate_prior_zones(grindy_zone_id, harvest_away_max_harvests, data, rng)
         inv = _add_inventories(
             inv,
             simulate_harvest(grindy_zone, grinding_pct, harvest_away_max_harvests, data, rng),

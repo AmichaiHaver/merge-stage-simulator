@@ -2,7 +2,7 @@ from __future__ import annotations
 import streamlit as st
 import plotly.graph_objects as go
 from data import load_data
-from simulation import build_curve, build_bottleneck_report
+from simulation import build_curve, build_bottleneck_report, CurveResult
 
 st.set_page_config(page_title="Merge Stage Simulator", layout="wide")
 st.title("Merge Stage Simulator — LakeCottage")
@@ -43,7 +43,7 @@ grindy_id, puzzle_id = PAIRS[PAIR_LABELS.index(selected)]
 
 # ── Run simulation ─────────────────────────────────────────────────────────
 with st.spinner(f"Running {n_sims:,} simulations…"):
-    curve = build_curve(
+    result: CurveResult = build_curve(
         grindy_zone_id=grindy_id,
         puzzle_zone_id=puzzle_id,
         required_merge_pct=required_pcts[puzzle_id],
@@ -51,6 +51,9 @@ with st.spinner(f"Running {n_sims:,} simulations…"):
         n_simulations=n_sims,
         data=data,
     )
+
+curve = result.success_rates
+avg_points = result.avg_points
 
 # ── Chart ─────────────────────────────────────────────────────────────────
 x = list(curve.keys())
@@ -90,6 +93,32 @@ st.subheader("Key Thresholds")
 cols = st.columns(5)
 for col, pct in zip(cols, [10, 25, 40, 60, 80]):
     col.metric(f"{pct}% Grinding", f"{curve.get(pct, 0) * 100:.1f}%")
+
+# ── Points Score Chart ─────────────────────────────────────────────────────
+st.divider()
+st.subheader("Average Points Score")
+
+fig_pts = go.Figure()
+fig_pts.add_trace(go.Scatter(
+    x=list(avg_points.keys()),
+    y=list(avg_points.values()),
+    mode="lines+markers",
+    name="Avg points score",
+    line=dict(color="#f39c12", width=2.5),
+    marker=dict(size=7),
+))
+fig_pts.update_layout(
+    xaxis_title="% of Grindy Zone Harvested",
+    yaxis_title="Average Total Points Score",
+    xaxis=dict(range=[0, 100], ticksuffix="%"),
+    height=380,
+    margin=dict(r=120),
+)
+st.plotly_chart(fig_pts, use_container_width=True)
+
+pts_cols = st.columns(5)
+for col, pct in zip(pts_cols, [10, 25, 40, 60, 80]):
+    col.metric(f"{pct}% Grinding", f"{avg_points.get(pct, 0):,.0f} pts")
 
 # ── Bottleneck analysis ───────────────────────────────────────────────────
 st.divider()

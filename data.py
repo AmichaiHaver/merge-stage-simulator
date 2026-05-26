@@ -59,6 +59,8 @@ class GameData:
     chains: list[MergeChain]           # puzzle chains only
     currency_chain: MergeChain         # discovery / zone-unlock chain
     zone_unlocks: dict[int, ZoneUnlock]
+    points_chain: MergeChain           # Event_LakeCottage_Point_1..N ordered low→high
+    point_values: dict[str, int]       # prefab -> score value
 
 
 def load_data(excel_path: str = EXCEL_PATH) -> GameData:
@@ -67,6 +69,7 @@ def load_data(excel_path: str = EXCEL_PATH) -> GameData:
     plants, loot_tables = _parse_plants_and_loot(wb)
     chains, currency_chain = _parse_chains(wb)
     zone_unlocks = _parse_zone_unlocks(wb)
+    points_chain, point_values = _parse_points_chain(wb)
     return GameData(
         zones=zones,
         plants=plants,
@@ -74,6 +77,8 @@ def load_data(excel_path: str = EXCEL_PATH) -> GameData:
         chains=chains,
         currency_chain=currency_chain,
         zone_unlocks=zone_unlocks,
+        points_chain=points_chain,
+        point_values=point_values,
     )
 
 
@@ -197,6 +202,22 @@ def _parse_chains(wb) -> tuple[list[MergeChain], MergeChain]:
     chains = [MergeChain(name=name, items=items) for name, items in chain_items.items()]
     currency_chain = MergeChain(name="Discovery Chain", items=currency_items)
     return chains, currency_chain
+
+
+def _parse_points_chain(wb) -> tuple[MergeChain, dict[str, int]]:
+    item_ws = wb["Item Database"]
+    point_items: list[str] = []
+
+    for row in item_ws.iter_rows(min_row=2, max_row=item_ws.max_row, values_only=True):
+        chain_name = row[0]
+        prefab = row[3]
+        if chain_name and "Point" in str(chain_name) and prefab:
+            point_items.append(str(prefab))
+
+    # Score value = 3^index: Point_1=1, Point_2=3, Point_3=9, ...
+    # Update once actual game score values are confirmed from Excel
+    point_values = {prefab: 3 ** i for i, prefab in enumerate(point_items)}
+    return MergeChain(name="Points Chain", items=point_items), point_values
 
 
 def _parse_zone_unlocks(wb) -> dict[int, ZoneUnlock]:

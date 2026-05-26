@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from data import load_data, ZoneData, MergeChain, ZoneUnlock
-from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, build_curve
+from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, build_curve, CurveResult
 
 EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
@@ -123,19 +123,19 @@ def test_unlock_with_higher_level_currency():
 
 
 def test_build_curve_is_monotone(game_data):
-    curve = build_curve(3, 4, 0.5, 20, 300, game_data)
-    values = [curve[k] for k in sorted(curve.keys())]
+    result = build_curve(3, 4, 0.5, 20, 300, game_data)
+    values = [result.success_rates[k] for k in sorted(result.success_rates.keys())]
     for i in range(1, len(values)):
         assert values[i] >= values[i - 1] - 0.15
 
 
 def test_build_curve_zero_grinding_near_zero(game_data):
     # At 0% grinding of zone 3, player has no ancient_object/flower → puzzle completion fails
-    curve = build_curve(3, 4, 0.5, 20, 500, game_data)
-    assert curve[0] < 0.10
+    result = build_curve(3, 4, 0.5, 20, 500, game_data)
+    assert result.success_rates[0] < 0.10
 
 
 def test_build_curve_full_grinding_high_success(game_data):
     # Zone 5, 10% required — only ancient_object/flower needed, which are harvestable
-    curve = build_curve(3, 5, 0.1, 20, 500, game_data)
-    assert curve[100] > 0.50
+    result = build_curve(3, 5, 0.1, 20, 500, game_data)
+    assert result.success_rates[100] > 0.50
