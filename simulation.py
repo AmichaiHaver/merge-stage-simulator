@@ -354,26 +354,39 @@ class FullRunResult:
     # 'Currency' means zone unlock was the blocker; chain name means puzzle chain was
 
 
+@dataclass
+class PlayerRunResult:
+    final_score: float
+    grinding_per_zone: dict[int, float]
+    completed_zones: set[int]
+    zone_score_map: dict[int, float]
+    zone_healing_map: dict[int, float]
+    zone_blocker_map: dict[int, list[str]]       # zone_id → list of chain display names
+    zone_puzzle_extra_grind: dict[int, float]    # puzzle_zone_id → (grinding_pct - discovery_only_pct)
+    zone_puzzle_chain_sources: dict[int, dict[str, dict[str, int]]]
+    # puzzle_zone_id → chain_key → {'bramble': base_units, 'other': base_units}
+
+
 def simulate_player_run(
     data: GameData,
     puzzle_completion_pct: float,
     harvest_away_max_harvests: int,
     rng: np.random.Generator,
-) -> tuple[float, dict[int, float], set[int], dict[int, float], dict[int, float], dict[int, str]]:
+) -> PlayerRunResult:
     """
     Simulate one player running the full event end-to-end.
 
-    Returns:
-        (final_score, grinding_pct_per_grindy_zone, completed_zones,
-         zone_score_map, zone_healing_map, zone_blocker_map)
-    zone_blocker_map: grindy zone_id → chain display name or 'Currency'
+    Returns a PlayerRunResult dataclass.
+    zone_blocker_map: grindy zone_id → list of chain display names or ['Currency']
     """
     inventory: dict[str, int] = {}
     grinding_per_zone: dict[int, float] = {}
     completed_zones: set[int] = set()
     zone_score_map: dict[int, float] = {}
     zone_healing_map: dict[int, float] = {}
-    zone_blocker_map: dict[int, str] = {}
+    zone_blocker_map: dict[int, list[str]] = {}
+    zone_puzzle_extra_grind: dict[int, float] = {}
+    zone_puzzle_chain_sources: dict[int, dict[str, dict[str, int]]] = {}
     # Puzzle zone non-Competition harvest pre-simulated during grindy zone processing
     cached_puzzle_harvests: dict[int, dict[str, int]] = {}
 
@@ -452,7 +465,7 @@ def simulate_player_run(
                                 data.zone_unlocks.get(pz_id, ZoneUnlock(pz_id, None)),
                                 data.currency_chain,
                             ):
-                                zone_blocker_map[zone_id] = "Currency"
+                                zone_blocker_map[zone_id] = ["Currency"]
                                 break
                             pz_copy = dict(final_test)
                             opened, chain_opened, chain_total = attempt_puzzle_zone(
@@ -462,9 +475,9 @@ def simulate_player_run(
                             required = math.ceil(total_tiles * puzzle_completion_pct) if total_tiles > 0 else 0
                             if opened < required:
                                 bottleneck = _get_bottleneck_chain(chain_opened, chain_total)
-                                zone_blocker_map[zone_id] = (
+                                zone_blocker_map[zone_id] = [
                                     _chain_display_name(bottleneck) if bottleneck else "puzzle"
-                                )
+                                ]
                                 break
 
                 inventory = _add_inventories(inventory, full_grindy_inv)
@@ -489,7 +502,16 @@ def simulate_player_run(
             zone_healing_map[zone_id] = _compute_healing_power(inventory)
 
     final_score = _compute_score(inventory, data.point_values, data.points_chain)
-    return final_score, grinding_per_zone, completed_zones, zone_score_map, zone_healing_map, zone_blocker_map
+    return PlayerRunResult(
+        final_score=final_score,
+        grinding_per_zone=grinding_per_zone,
+        completed_zones=completed_zones,
+        zone_score_map=zone_score_map,
+        zone_healing_map=zone_healing_map,
+        zone_blocker_map=zone_blocker_map,
+        zone_puzzle_extra_grind=zone_puzzle_extra_grind,
+        zone_puzzle_chain_sources=zone_puzzle_chain_sources,
+    )
 
 
 def build_full_run_results(
@@ -506,18 +528,17 @@ def build_full_run_results(
     zone_chain_blockers: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for _ in range(n_players):
-        score, grind_map, _reached, zone_score_map, zone_healing_map, zone_blocker_map = (
-            simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
-        )
-        scores.append(score)
-        for zone_id, pct in grind_map.items():
+        run = simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
+        scores.append(run.final_score)
+        for zone_id, pct in run.grinding_per_zone.items():
             zone_grind_pcts[zone_id].append(pct)
-        for zone_id, s in zone_score_map.items():
+        for zone_id, s in run.zone_score_map.items():
             zone_scores[zone_id].append(s)
-        for zone_id, hp in zone_healing_map.items():
+        for zone_id, hp in run.zone_healing_map.items():
             zone_healing_power[zone_id].append(hp)
-        for zone_id, chain_name in zone_blocker_map.items():
-            zone_chain_blockers[zone_id][chain_name] += 1
+        for zone_id, chain_names in run.zone_blocker_map.items():
+            for chain_name in chain_names:
+                zone_chain_blockers[zone_id][chain_name] += 1
 
     arr = np.array(scores)
     percentiles = {
