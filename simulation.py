@@ -352,6 +352,10 @@ class FullRunResult:
     zone_chain_blockers: dict[int, dict[str, int]]
     # grindy zone → {chain_display_name: player_count}
     # 'Currency' means zone unlock was the blocker; chain name means puzzle chain was
+    zone_puzzle_extra_grind: dict[int, list[float]]
+    # puzzle_zone_id → per-player distribution of (grinding_pct - discovery_only_pct)
+    zone_puzzle_chain_sources: dict[int, dict[str, dict[str, list[float]]]]
+    # puzzle_zone_id → chain_key → {'bramble': [per-player base units], 'other': [per-player base units]}
 
 
 @dataclass
@@ -584,6 +588,10 @@ def build_full_run_results(
     zone_scores: dict[int, list[float]] = defaultdict(list)
     zone_healing_power: dict[int, list[float]] = defaultdict(list)
     zone_chain_blockers: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    zone_puzzle_extra_grind: dict[int, list[float]] = defaultdict(list)
+    zone_puzzle_chain_sources_agg: dict[int, dict[str, dict[str, list[float]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
 
     for _ in range(n_players):
         run = simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
@@ -597,6 +605,12 @@ def build_full_run_results(
         for zone_id, chain_names in run.zone_blocker_map.items():
             for chain_name in chain_names:
                 zone_chain_blockers[zone_id][chain_name] += 1
+        for zone_id, extra in run.zone_puzzle_extra_grind.items():
+            zone_puzzle_extra_grind[zone_id].append(extra)
+        for zone_id, chain_map in run.zone_puzzle_chain_sources.items():
+            for chain_key, sources in chain_map.items():
+                for source_name, units in sources.items():
+                    zone_puzzle_chain_sources_agg[zone_id][chain_key][source_name].append(float(units))
 
     arr = np.array(scores)
     percentiles = {
@@ -611,4 +625,9 @@ def build_full_run_results(
         zone_scores=dict(zone_scores),
         zone_healing_power=dict(zone_healing_power),
         zone_chain_blockers={k: dict(v) for k, v in zone_chain_blockers.items()},
+        zone_puzzle_extra_grind=dict(zone_puzzle_extra_grind),
+        zone_puzzle_chain_sources={
+            z: {ck: dict(src) for ck, src in cm.items()}
+            for z, cm in zone_puzzle_chain_sources_agg.items()
+        },
     )
