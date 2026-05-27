@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from data import load_data, ZoneData, MergeChain, ZoneUnlock
-from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, _compute_chain_base_units
+from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, _compute_chain_base_units, simulate_player_run
 
 EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
@@ -142,5 +142,15 @@ def test_compute_chain_base_units_ignores_non_chain_items():
     result = _compute_chain_base_units({"a_0": 2, "unrelated_item": 100}, [chain])
     assert "unrelated_item" not in result
     assert result.get("a_0", 0) == 2
+
+
+def test_puzzle_extra_grind_tracked(game_data):
+    rng = np.random.default_rng(seed=0)
+    run = simulate_player_run(game_data, puzzle_completion_pct=0.5,
+                               harvest_away_max_harvests=20, rng=rng)
+    # extra_grind must be >= 0 for all puzzle zones with data
+    for zone_id, extra in run.zone_puzzle_extra_grind.items():
+        assert extra >= 0.0, f"Zone {zone_id} extra_grind is negative: {extra}"
+        assert extra <= 1.0, f"Zone {zone_id} extra_grind > 1.0: {extra}"
 
 

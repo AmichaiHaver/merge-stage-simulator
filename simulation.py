@@ -415,6 +415,25 @@ def simulate_player_run(
                             data.zones[pz_id], 1.0, harvest_away_max_harvests, data, rng
                         )
 
+                # Find minimum grind for discovery (zone unlock) only — no puzzle completion check
+                discovery_only_pct = 1.0
+                if downstream:
+                    for step in range(1, 21):
+                        pct = step / 20
+                        grindy_slice = {k: round(v * pct) for k, v in full_grindy_inv.items()}
+                        test_inv = _add_inventories(inventory, grindy_slice)
+                        if all(
+                            check_zone_unlock(
+                                test_inv,
+                                data.zone_unlocks.get(pz_id, ZoneUnlock(pz_id, None)),
+                                data.currency_chain,
+                            )
+                            for pz_id in downstream
+                            if pz_id in data.zones
+                        ):
+                            discovery_only_pct = pct
+                            break
+
                 # Find minimum grinding % that lets the player complete downstream puzzle zone
                 grinding_pct = 1.0
                 for step in range(1, 21):
@@ -479,6 +498,11 @@ def simulate_player_run(
                                     _chain_display_name(bottleneck) if bottleneck else "puzzle"
                                 ]
                                 break
+
+                # Store extra grind (puzzle completion cost beyond discovery) per downstream puzzle zone
+                extra = max(0.0, grinding_pct - discovery_only_pct)
+                for pz_id in downstream:
+                    zone_puzzle_extra_grind[pz_id] = extra
 
                 inventory = _add_inventories(inventory, full_grindy_inv)
                 grinding_per_zone[zone_id] = grinding_pct
