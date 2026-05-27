@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from data import load_data, ZoneData, MergeChain, ZoneUnlock
-from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, build_curve, CurveResult
+from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, _compute_chain_base_units
 
 EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
@@ -68,10 +68,13 @@ def test_insufficient_inventory_fails():
 
 def test_lower_level_items_merge_up():
     chain = _make_chain(["item_1", "item_2", "item_3"])
-    # Need 2x item_2. Cost = 2x3^1 = 6 base units. Have 6x item_1 = 6. Pass.
+    # 2 tiles of item_2. Each costs 2× item_2 (3→1 unlock). To get 2× item_2: use 5→2 (5 item_1).
+    # Tile 1: 5 item_1 → 2 item_2, spend 2, refund 1 item_3. Remaining: 5 item_1, 1 item_3.
+    # Tile 2: 5 item_1 → 2 item_2, spend 2, refund 1 item_3. Total: 10 item_1 needed.
     zone = ZoneData(zone_id=99, zone_type="Puzzle", tile_count=10,
                     composition={"item_2": 20.0})  # 2 tiles
-    assert check_puzzle_completion({"item_1": 6}, zone, 1.0, [chain]) is True
+    assert check_puzzle_completion({"item_1": 10}, zone, 1.0, [chain]) is True
+    assert check_puzzle_completion({"item_1": 6}, zone, 1.0, [chain]) is False
 
 
 def test_higher_level_cannot_downgrade():
@@ -119,23 +122,25 @@ def test_unlock_with_higher_level_currency():
     assert check_zone_unlock({"Event_LakeCottage_Currency_4": 1}, unlock, cc) is True
 
 
-# --- build_curve tests ---
+def test_compute_chain_base_units_single_item():
+    chain = MergeChain(name="test", items=["a_0", "a_1", "a_2"])
+    result = _compute_chain_base_units({"a_0": 2, "a_2": 1}, [chain])
+    # a_0 at level 0: 2 × 3^0 = 2; a_2 at level 2: 1 × 3^2 = 9; total under chain_key "a_0" = 11
+    assert result == {"a_0": 11}
 
 
-def test_build_curve_is_monotone(game_data):
-    result = build_curve(3, 4, 0.5, 20, 300, game_data)
-    values = [result.success_rates[k] for k in sorted(result.success_rates.keys())]
-    for i in range(1, len(values)):
-        assert values[i] >= values[i - 1] - 0.15
+def test_compute_chain_base_units_two_chains():
+    chain_a = MergeChain(name="A", items=["a_0", "a_1"])
+    chain_b = MergeChain(name="B", items=["b_0", "b_1"])
+    result = _compute_chain_base_units({"a_1": 1, "b_0": 3}, [chain_a, chain_b])
+    assert result["a_0"] == 3   # 1 × 3^1
+    assert result["b_0"] == 3   # 3 × 3^0
 
 
-def test_build_curve_zero_grinding_near_zero(game_data):
-    # At 0% grinding of zone 3, player has no ancient_object/flower → puzzle completion fails
-    result = build_curve(3, 4, 0.5, 20, 500, game_data)
-    assert result.success_rates[0] < 0.10
+def test_compute_chain_base_units_ignores_non_chain_items():
+    chain = MergeChain(name="test", items=["a_0", "a_1"])
+    result = _compute_chain_base_units({"a_0": 2, "unrelated_item": 100}, [chain])
+    assert "unrelated_item" not in result
+    assert result.get("a_0", 0) == 2
 
 
-def test_build_curve_full_grinding_high_success(game_data):
-    # Zone 5, 10% required — only ancient_object/flower needed, which are harvestable
-    result = build_curve(3, 5, 0.1, 20, 500, game_data)
-    assert result.success_rates[100] > 0.50
