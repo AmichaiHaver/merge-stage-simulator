@@ -154,3 +154,20 @@ def test_puzzle_extra_grind_tracked(game_data):
         assert extra <= 1.0, f"Zone {zone_id} extra_grind > 1.0: {extra}"
 
 
+def test_puzzle_zone_blockers_recorded():
+    # Use full 3-file data so loot tables produce currency and players reach puzzle zones
+    full_data = load_data(
+        "data/Discovery Event Layout Generator 001.xlsx",
+        "data/_Data_Loot - Event LakeCottage.xlsx",
+        "data/_Data_Objects - Event LakeCottage.xlsx",
+    )
+    rng = np.random.default_rng(seed=7)
+    # Use 100% completion — very hard, most chains will be blockers
+    run = simulate_player_run(full_data, puzzle_completion_pct=1.0,
+                               harvest_away_max_harvests=20, rng=rng)
+    puzzle_zone_ids = {zid for zid, z in full_data.zones.items() if z.zone_type == "Puzzle"}
+    blocker_keys = set(run.zone_blocker_map.keys())
+    # At 100% completion requirement, puzzle zones should have blockers
+    assert blocker_keys & puzzle_zone_ids, "Expected at least one puzzle zone to have blockers"
+
+

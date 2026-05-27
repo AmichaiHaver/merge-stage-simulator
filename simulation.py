@@ -518,7 +518,26 @@ def simulate_player_run(
 
                 # For puzzle zones: attempt to unlock Competition_* tiles
                 if zone.zone_type == "Puzzle" and data.chains:
-                    attempt_puzzle_zone(inventory, zone, data.chains)
+                    opened, chain_opened, chain_total = attempt_puzzle_zone(inventory, zone, data.chains)
+
+                    blockers: list[str] = []
+                    for chain_key, total in chain_total.items():
+                        per_chain_required = math.ceil(total * puzzle_completion_pct) if total > 0 else 0
+                        if chain_opened.get(chain_key, 0) < per_chain_required:
+                            blockers.append(_chain_display_name(chain_key))
+
+                    # Check discovery: does the player have the Currency unlock for the next zone?
+                    next_zone_id = zone_id + 1
+                    while next_zone_id in data.zones and data.zones[next_zone_id].zone_type not in ("Grindy", "Puzzle"):
+                        next_zone_id += 1
+                    if next_zone_id in data.zones:
+                        next_unlock = data.zone_unlocks.get(next_zone_id, ZoneUnlock(next_zone_id, None))
+                        if not check_zone_unlock(inventory, next_unlock, data.currency_chain):
+                            if "Currency" not in blockers:
+                                blockers.append("Currency")
+
+                    if blockers:
+                        zone_blocker_map[zone_id] = blockers
 
             completed_zones.add(zone_id)
             made_progress = True
