@@ -171,3 +171,21 @@ def test_puzzle_zone_blockers_recorded():
     assert blocker_keys & puzzle_zone_ids, "Expected at least one puzzle zone to have blockers"
 
 
+def test_puzzle_chain_sources_tracked():
+    full_data = load_data(
+        "data/Discovery Event Layout Generator 001.xlsx",
+        "data/_Data_Loot - Event LakeCottage.xlsx",
+        "data/_Data_Objects - Event LakeCottage.xlsx",
+    )
+    rng = np.random.default_rng(seed=3)
+    run = simulate_player_run(full_data, puzzle_completion_pct=0.5,
+                               harvest_away_max_harvests=20, rng=rng)
+    # zone_puzzle_chain_sources should be populated for reached puzzle zones
+    assert len(run.zone_puzzle_chain_sources) > 0, "Expected chain sources for at least one puzzle zone"
+    for zone_id, chain_map in run.zone_puzzle_chain_sources.items():
+        for chain_key, sources in chain_map.items():
+            assert 'bramble' in sources and 'other' in sources, f"Zone {zone_id} chain {chain_key} missing source keys"
+            assert sources['bramble'] >= 0
+            assert sources['other'] >= 0
+
+

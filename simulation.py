@@ -509,11 +509,16 @@ def simulate_player_run(
 
             else:
                 # Non-grindy zone (Start / Puzzle / Fog):
+                # Snapshot chain base units BEFORE adding puzzle zone's own harvest
+                pre_puzzle_chain_units = _compute_chain_base_units(inventory, data.chains) if data.chains else {}
+
                 # Apply pre-simulated harvest if available, otherwise simulate now
                 if zone_id in cached_puzzle_harvests:
                     inv_delta = cached_puzzle_harvests.pop(zone_id)
                 else:
                     inv_delta = simulate_harvest(zone, 1.0, harvest_away_max_harvests, data, rng)
+
+                bramble_chain_units = _compute_chain_base_units(inv_delta, data.chains) if data.chains else {}
                 inventory = _add_inventories(inventory, inv_delta)
 
                 # For puzzle zones: attempt to unlock Competition_* tiles
@@ -538,6 +543,16 @@ def simulate_player_run(
 
                     if blockers:
                         zone_blocker_map[zone_id] = blockers
+
+                    # Record chain source breakdown (bramble harvest vs prior zones)
+                    if chain_total:
+                        sources: dict[str, dict[str, int]] = {}
+                        for chain_key in chain_total:
+                            sources[chain_key] = {
+                                'bramble': bramble_chain_units.get(chain_key, 0),
+                                'other': pre_puzzle_chain_units.get(chain_key, 0),
+                            }
+                        zone_puzzle_chain_sources[zone_id] = sources
 
             completed_zones.add(zone_id)
             made_progress = True
