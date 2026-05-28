@@ -92,6 +92,7 @@ active_files.append(f"Loot: {'uploaded' if loot_bytes else 'default'}")
 active_files.append(f"Objects: {'uploaded' if objects_bytes else 'default'}")
 active_files.append(f"GE Revamp: {'uploaded' if ge_revamp_bytes else 'default'}")
 st.caption(" · ".join(active_files))
+st.caption(f"DEBUG — zones: {len(data.zones)}, plants: {len(data.plants)}, chains: {len(data.chains)}, point_values: {len(data.point_values)}")
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 st.sidebar.header("Simulation Parameters")
