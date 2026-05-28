@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib
 import io
+import os
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
@@ -11,9 +12,10 @@ from simulation import build_full_run_results, FullRunResult, get_harvest_away_m
 st.set_page_config(page_title="Merge Stage Simulator", layout="wide")
 st.title("Merge Stage Simulator — LakeCottage")
 
-DEFAULT_LAYOUT_PATH  = "data/Discovery Event Layout Generator 001.xlsx"
-DEFAULT_LOOT_PATH    = "data/_Data_Loot - Event LakeCottage.xlsx"
-DEFAULT_OBJECTS_PATH = "data/_Data_Objects - Event LakeCottage.xlsx"
+DEFAULT_LAYOUT_PATH    = "data/Discovery Event Layout Generator 001.xlsx"
+DEFAULT_LOOT_PATH      = "data/_Data_Loot - Event LakeCottage.xlsx"
+DEFAULT_OBJECTS_PATH   = "data/_Data_Objects - Event LakeCottage.xlsx"
+DEFAULT_GE_REVAMP_PATH = "data/GE Revamp Data Editor.xlsx"
 
 # ── File upload section ────────────────────────────────────────────────────────
 with st.expander("📂 Data Files", expanded=True):
@@ -21,7 +23,7 @@ with st.expander("📂 Data Files", expanded=True):
         "Upload Excel files to run the simulation. "
         "Leave empty to use the built-in default files."
     )
-    col_l, col_lo, col_o = st.columns(3)
+    col_l, col_lo, col_o, col_ge = st.columns(4)
     uploaded_layout = col_l.file_uploader(
         "Layout Generator (.xlsx)", type=["xlsx"], key="layout_file",
         help="Discovery Event Layout Generator file",
@@ -34,6 +36,15 @@ with st.expander("📂 Data Files", expanded=True):
         "Objects Data (.xlsx)", type=["xlsx"], key="objects_file",
         help="_Data_Objects - Event LakeCottage file",
     )
+    uploaded_ge_revamp = col_ge.file_uploader(
+        "GE Revamp Data Editor (.xlsx)", type=["xlsx"], key="ge_revamp_file",
+        help="GE Revamp Data Editor — harvest charges, seconds, on_die",
+    )
+
+
+_DEFAULTS_EXIST = all(os.path.exists(p) for p in [
+    DEFAULT_LAYOUT_PATH, DEFAULT_LOOT_PATH, DEFAULT_OBJECTS_PATH, DEFAULT_GE_REVAMP_PATH
+])
 
 
 def _read_bytes(f) -> bytes | None:
@@ -44,27 +55,42 @@ def _read_bytes(f) -> bytes | None:
 
 
 @st.cache_resource
-def get_data(layout_hash: str, loot_hash: str, objects_hash: str,
-             layout_bytes, loot_bytes, objects_bytes):
-    layout_src   = io.BytesIO(layout_bytes)   if layout_bytes   else DEFAULT_LAYOUT_PATH
-    loot_src     = io.BytesIO(loot_bytes)     if loot_bytes     else DEFAULT_LOOT_PATH
-    objects_src  = io.BytesIO(objects_bytes)  if objects_bytes  else DEFAULT_OBJECTS_PATH
-    return load_data(layout_src, loot_src, objects_src)
+def get_data(layout_hash: str, loot_hash: str, objects_hash: str, ge_revamp_hash: str,
+             layout_bytes, loot_bytes, objects_bytes, ge_revamp_bytes):
+    layout_src    = io.BytesIO(layout_bytes)    if layout_bytes    else DEFAULT_LAYOUT_PATH
+    loot_src      = io.BytesIO(loot_bytes)      if loot_bytes      else DEFAULT_LOOT_PATH
+    objects_src   = io.BytesIO(objects_bytes)   if objects_bytes   else DEFAULT_OBJECTS_PATH
+    ge_revamp_src = io.BytesIO(ge_revamp_bytes) if ge_revamp_bytes else DEFAULT_GE_REVAMP_PATH
+    return load_data(layout_src, loot_src, objects_src, ge_revamp_src)
 
 
-layout_bytes  = _read_bytes(uploaded_layout)
-loot_bytes    = _read_bytes(uploaded_loot)
-objects_bytes = _read_bytes(uploaded_objects)
+layout_bytes    = _read_bytes(uploaded_layout)
+loot_bytes      = _read_bytes(uploaded_loot)
+objects_bytes   = _read_bytes(uploaded_objects)
+ge_revamp_bytes = _read_bytes(uploaded_ge_revamp)
 
-layout_hash  = hashlib.md5(layout_bytes).hexdigest()  if layout_bytes  else "default_001"
-loot_hash    = hashlib.md5(loot_bytes).hexdigest()    if loot_bytes    else "default_loot"
-objects_hash = hashlib.md5(objects_bytes).hexdigest() if objects_bytes else "default_objects"
+if not _DEFAULTS_EXIST:
+    missing = []
+    if not layout_bytes:    missing.append("Layout Generator")
+    if not loot_bytes:      missing.append("Loot Data")
+    if not objects_bytes:   missing.append("Objects Data")
+    if not ge_revamp_bytes: missing.append("GE Revamp Data Editor")
+    if missing:
+        st.warning(f"Please upload all 4 Excel files to run the simulation.\n\nMissing: {', '.join(missing)}")
+        st.stop()
 
-data = get_data(layout_hash, loot_hash, objects_hash, layout_bytes, loot_bytes, objects_bytes)
+layout_hash    = hashlib.md5(layout_bytes).hexdigest()    if layout_bytes    else "default_001"
+loot_hash      = hashlib.md5(loot_bytes).hexdigest()      if loot_bytes      else "default_loot"
+objects_hash   = hashlib.md5(objects_bytes).hexdigest()   if objects_bytes   else "default_objects"
+ge_revamp_hash = hashlib.md5(ge_revamp_bytes).hexdigest() if ge_revamp_bytes else "default_ge_revamp"
+
+data = get_data(layout_hash, loot_hash, objects_hash, ge_revamp_hash,
+                layout_bytes, loot_bytes, objects_bytes, ge_revamp_bytes)
 
 active_files = [f"Layout: {'uploaded' if layout_bytes else 'default (001)'}"]
 active_files.append(f"Loot: {'uploaded' if loot_bytes else 'default'}")
 active_files.append(f"Objects: {'uploaded' if objects_bytes else 'default'}")
+active_files.append(f"GE Revamp: {'uploaded' if ge_revamp_bytes else 'default'}")
 st.caption(" · ".join(active_files))
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -78,6 +104,12 @@ puzzle_completion_pct = st.sidebar.slider(
     help="Player grinds until they can complete this % of each puzzle zone before advancing",
 ) / 100
 
+n_dragons = st.sidebar.slider(
+    "Dragons (parallel harvesters)",
+    min_value=1, max_value=5, value=1, step=1,
+    help="Number of dragons harvesting in parallel — divides total harvest time per zone",
+)
+
 harvest_away_max_harvests = get_harvest_away_max_harvests(data)
 st.sidebar.caption(f"HarvestAway max harvests: {harvest_away_max_harvests} (from data)")
 
@@ -88,6 +120,7 @@ with st.spinner(f"Simulating {n_players:,} players through the full event…"):
         puzzle_completion_pct=puzzle_completion_pct,
         harvest_away_max_harvests=harvest_away_max_harvests,
         n_players=n_players,
+        n_workers=os.cpu_count(),
     )
 
 _PCTS = [5, 10, 25, 50, 75, 90, 95]
@@ -100,50 +133,61 @@ def _pct_table(value_map: dict[int, list[float]], fmt: str = "{:,.0f}") -> pd.Da
     zone_ids = [z for z in non_fog_zone_ids if z in value_map and value_map[z]]
     rows = []
     for p in _PCTS:
-        row: dict = {"Percentile": f"p{p}"}
+        row: dict = {}
         for z in zone_ids:
             arr = np.array(value_map[z])
             row[zone_col_labels[z]] = fmt.format(np.percentile(arr, p))
         rows.append(row)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows, index=[f"p{p}" for p in _PCTS])
+    df.index.name = "Percentile"
+    return df
 
 
 # ── Score percentiles per zone ─────────────────────────────────────────────────
 st.subheader("Score Percentiles per Zone")
-st.dataframe(_pct_table(result.zone_scores), hide_index=True, use_container_width=True)
+st.dataframe(_pct_table(result.zone_scores), hide_index=False, use_container_width=True)
 
-# ── Grinding per Grindy Zone ──────────────────────────────────────────────────
+# ── Harvest Efficiency per Zone ───────────────────────────────────────────────
 st.divider()
-st.subheader("Grinding Needed per Grindy Zone")
+st.subheader("Harvest Efficiency per Zone")
+st.caption(
+    "Cumulative actual harvests / cumulative possible harvests up to each zone. "
+    "Grindy zones: harvests done to satisfy discovery + puzzle unlock. "
+    "Puzzle/Start zones: 100% of HarvestAway and Bramble tiles. "
+    "Only HarvestAway and Bramble charges counted."
+)
 
-grindy_zone_ids = sorted(result.zone_grind_pcts.keys())
-if grindy_zone_ids:
-    fig_grind = go.Figure()
-    for zone_id in grindy_zone_ids:
-        pcts = np.array(result.zone_grind_pcts[zone_id]) * 100
-        if len(pcts) == 0:
+eff_zone_ids = sorted(z for z in result.zone_harvest_efficiency.keys() if z <= 9)
+if eff_zone_ids:
+    fig_eff = go.Figure()
+    for zone_id in eff_zone_ids:
+        effs = np.array(result.zone_harvest_efficiency[zone_id]) * 100
+        if len(effs) == 0:
             continue
-        fig_grind.add_trace(go.Box(
-            y=pcts,
-            name=f"Zone {zone_id}",
+        zone_type = data.zones[zone_id].zone_type if zone_id in data.zones else "?"
+        fig_eff.add_trace(go.Box(
+            y=effs,
+            name=f"Z{zone_id} ({zone_type[0]})",
             boxmean=True,
-            marker_color="#e67e22",
-            line_color="#c0392b",
+            marker_color="#2980b9",
+            line_color="#1a5276",
         ))
-    fig_grind.update_layout(
-        yaxis=dict(range=[0, 105], ticksuffix="%", title="Grinding % Needed"),
-        xaxis_title="Grindy Zone",
-        height=380,
+    fig_eff.update_layout(
+        yaxis=dict(range=[0, 105], ticksuffix="%", title="Harvest Efficiency (cumulative)"),
+        xaxis_title="Zone",
+        height=420,
         margin=dict(r=40),
         showlegend=False,
     )
-    st.plotly_chart(fig_grind, use_container_width=True)
-    st.caption(
-        "Box shows p25–p75. Whiskers = p5–p95. Dot = mean. "
-        "Wide spread = zone is RNG-sensitive."
+    st.plotly_chart(fig_eff, use_container_width=True)
+    st.caption("Box = p25–p75. Whiskers = p5–p95. Dot = mean. Lower = player harvested small fraction of available tiles.")
+    st.dataframe(
+        _pct_table(result.zone_harvest_efficiency, fmt="{:.1%}"),
+        hide_index=False,
+        use_container_width=True,
     )
 else:
-    st.info("No grindy zones with grinding data.")
+    st.info("No harvest efficiency data.")
 
 # ── Blocker breakdown per Zone ─────────────────────────────────────────────────
 st.divider()
@@ -179,45 +223,13 @@ if all_zone_ids_with_blockers:
         b_rows.append(row)
 
     if b_rows:
-        st.dataframe(pd.DataFrame(b_rows), hide_index=True, use_container_width=True)
+        _b_df = pd.DataFrame(b_rows).set_index("Zone")
+        st.dataframe(_b_df, hide_index=False, use_container_width=True)
     else:
         st.info("No chain blockers recorded.")
 else:
     st.info("No chain blockers recorded.")
 
-# ── Extra Grind for Puzzle Zones ───────────────────────────────────────────────
-st.divider()
-st.subheader("Extra Grind for Puzzle Zones")
-st.caption(
-    "Additional grinding % players needed (beyond just getting the discovery item) "
-    "in order to satisfy the puzzle completion requirement."
-)
-
-puzzle_zone_ids_with_extra = sorted(result.zone_puzzle_extra_grind.keys())
-if puzzle_zone_ids_with_extra:
-    fig_extra = go.Figure()
-    for zone_id in puzzle_zone_ids_with_extra:
-        extras = np.array(result.zone_puzzle_extra_grind[zone_id]) * 100
-        if len(extras) == 0:
-            continue
-        fig_extra.add_trace(go.Box(
-            y=extras,
-            name=f"Zone {zone_id}",
-            boxmean=True,
-            marker_color="#8e44ad",
-            line_color="#6c3483",
-        ))
-    fig_extra.update_layout(
-        yaxis=dict(range=[0, 105], ticksuffix="%", title="Extra Grinding % for Puzzle"),
-        xaxis_title="Puzzle Zone",
-        height=380,
-        margin=dict(r=40),
-        showlegend=False,
-    )
-    st.plotly_chart(fig_extra, use_container_width=True)
-    st.caption("0% = puzzle already satisfied at discovery threshold. High values = puzzle completion was the bottleneck.")
-else:
-    st.info("No puzzle zone extra grind data.")
 
 # ── Chain Source Breakdown per Puzzle Zone ─────────────────────────────────────
 st.divider()
@@ -248,12 +260,107 @@ if result.zone_puzzle_chain_sources:
                 "Bramble %": f"{bramble_pct:.0f}%",
             })
         if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            _src_df = pd.DataFrame(rows).set_index("Chain")
+            st.dataframe(_src_df, hide_index=False, use_container_width=True)
 else:
     st.info("No chain source data available.")
 
 # ── Healing Power percentiles per zone ────────────────────────────────────────
 st.divider()
 st.subheader("Healing Power Percentiles per Zone")
-st.caption("Cumulative Life Orb healing power at each zone completion.")
-st.dataframe(_pct_table(result.zone_healing_power), hide_index=True, use_container_width=True)
+st.caption("Cumulative Life Orb healing power at each zone completion (minimum grind to pass).")
+st.dataframe(_pct_table(result.zone_healing_power), hide_index=False, use_container_width=True)
+
+st.subheader("Max Possible Healing Power per Zone")
+st.caption("Cumulative healing if player does 100% harvesting in every grindy zone.")
+st.dataframe(_pct_table(result.zone_max_healing_power), hide_index=False, use_container_width=True)
+
+# ── Time to complete each zone ─────────────────────────────────────────────────
+st.divider()
+st.subheader("Time to Complete Each Zone")
+st.caption(
+    f"Cumulative harvest time per zone with {n_dragons} dragon(s). "
+    "Parallel dragons divide harvest time. Does not include travel / merge time."
+)
+
+_time_zone_ids = [z for z in non_fog_zone_ids if z in result.zone_harvest_seconds and result.zone_harvest_seconds[z]]
+if _time_zone_ids:
+    n = len(result.scores)
+
+    # Cumulative per-player time at each zone boundary
+    _zone_cumulative: dict[int, np.ndarray] = {}
+    _running = np.zeros(n)
+    for z in _time_zone_ids:
+        arr = np.array(result.zone_harvest_seconds[z])
+        if len(arr) == n:
+            _running = _running + arr / n_dragons
+            _zone_cumulative[z] = _running.copy()
+
+    def _fmt_time(secs: float) -> str:
+        m = int(secs // 60)
+        h = m // 60
+        return f"{h}h {m % 60}m" if h > 0 else f"{m}m"
+
+    time_table_rows = []
+    for p in _PCTS:
+        row: dict = {"Percentile": f"p{p}"}
+        for z in _time_zone_ids:
+            if z in _zone_cumulative:
+                row[zone_col_labels[z]] = _fmt_time(float(np.percentile(_zone_cumulative[z], p)))
+        time_table_rows.append(row)
+
+    _time_df = pd.DataFrame(time_table_rows).set_index("Percentile")
+    st.dataframe(_time_df, hide_index=False, use_container_width=True)
+else:
+    st.info("No harvest time data. Ensure GE Revamp Data Editor is loaded.")
+
+# ── Item Inventory Distribution per Zone ──────────────────────────────────────
+st.divider()
+st.subheader("Item Inventory Distribution per Zone")
+st.caption(
+    "% of players who had ≥X of each item at end of each zone. "
+    "Rows: currency chain then puzzle chains (low→high level). Columns: zone × threshold (0–10+)."
+)
+
+_inv_zone_ids = [z for z in non_fog_zone_ids if z in result.zone_item_counts]
+if _inv_zone_ids and (data.chains or data.currency_chain):
+    # Build ordered list of (chain_label, item_prefab, level_label)
+    _chain_items: list[tuple[str, str, str]] = []
+    for i, item in enumerate(data.currency_chain.items):
+        _chain_items.append(("Discovery", item, f"Lvl {i+1}"))
+    for chain in data.chains:
+        lbl = _chain_display_name(chain.items[0]) if chain.items else chain.name
+        for i, item in enumerate(chain.items):
+            _chain_items.append((lbl, item, f"Lvl {i+1}"))
+
+    _THRESHOLDS = list(range(11))  # 0..10
+
+    # MultiIndex columns: (zone_label, threshold_label)
+    _col_tuples = [
+        (zone_col_labels[z], f"≥{x}" if x < 10 else "≥10")
+        for z in _inv_zone_ids
+        for x in _THRESHOLDS
+    ]
+    _mi = pd.MultiIndex.from_tuples(_col_tuples)
+
+    _rows = []
+    for chain_lbl, prefab, lvl_lbl in _chain_items:
+        row_data = []
+        for z in _inv_zone_ids:
+            counts = result.zone_item_counts[z].get(prefab, [])
+            n = len(counts)
+            for x in _THRESHOLDS:
+                if n == 0:
+                    row_data.append(None)
+                else:
+                    row_data.append(f"{sum(1 for c in counts if c >= x) / n * 100:.0f}%")
+        _rows.append([chain_lbl, lvl_lbl] + row_data)
+
+    _df_inv = pd.DataFrame(_rows, columns=pd.MultiIndex.from_tuples(
+        [("", "Chain"), ("", "Level")] + _col_tuples
+    ))
+    _df_inv_indexed = _df_inv.set_index([("", "Chain"), ("", "Level")])
+    _df_inv_indexed.index.names = ["Chain", "Level"]
+    st.dataframe(_df_inv_indexed, hide_index=False, use_container_width=True)
+else:
+    st.info("No inventory snapshot data.")
