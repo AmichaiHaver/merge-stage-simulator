@@ -5,7 +5,7 @@ Monte Carlo simulator for the LakeCottage event in Merge games.
 Simulates N players end-to-end through all zones. Shows score percentiles, grind amounts, blockers, and healing power per zone.
 
 ## Architecture
-- `data.py` — reads 3 Excel files into dataclasses
+- `data.py` — reads 4 Excel files into dataclasses
 - `simulation.py` — Monte Carlo engine
 - `app.py` — Streamlit UI
 - `tests/` — pytest (38 tests)
@@ -17,6 +17,7 @@ Simulates N players end-to-end through all zones. Shows score percentiles, grind
 | `Discovery Event Layout Generator 001.xlsx` | Zone structure, Item DB, Zone Gates, Generator LootTable |
 | `_Data_Loot - Event LakeCottage.xlsx` | Loot tables for generators |
 | `_Data_Objects - Event LakeCottage.xlsx` | HarvestAway definitions, point values |
+| `GE Revamp Data Editor.xlsx` | Harvest charges, seconds, on_die, **loot tables** per prefab (overrides Objects + Layout loot) |
 
 Defaults loaded automatically. User can override via file upload in UI.
 HarvestAway max_harvests = **3** (read from Objects file col 108, not hardcoded).
@@ -62,11 +63,13 @@ Returns `PlayerRunResult` dataclass (not tuple).
 - Puzzle zones: list of ALL chains below X% individually (can be multiple)
 
 ### Puzzle unlock mechanic (`attempt_puzzle_zone`)
-- Each Competition_* tile costs **2× same-level items** from inventory (not base-unit conversion)
-- Merge mechanic: 2 inventory + 1 locked board = 3 → 1 next-level (refund to inventory)
-- Build lower→higher: 5→2 when need ≥2, 3→1 when need 1 (via `_try_build_n_items`)
+- Each Competition_* tile costs **1× same-level item** from inventory (not base-unit conversion)
+- Freed board tile → merge-only pool (`freed`); cannot unlock same-level tiles
+- Merge rules: **5→2** preferred; **3→1** fallback. Merged output → `free` pool (can unlock)
+- Two pools: `free` (unlock + merge) and `freed` (merge only); consumed freed-first in merges
+- Build lower→higher for unlock: 5→2 when need ≥2, 3→1 when need 1 (via `_try_build_n_items`)
 - Cannot split higher→lower items
-- Tiles sorted lowest level first; cascade: refund may enable further unlocks
+- Tiles sorted lowest level first; cascade: merges may enable higher-level unlocks
 - `_try_build_n_items(inv, chain, level, n)` — returns new dict or None, never modifies input
 - Bottleneck = chain with lowest opened/total ratio
 
@@ -74,15 +77,22 @@ Returns `PlayerRunResult` dataclass (not tuple).
 Returns only the FIRST puzzle zone after a grindy zone.
 
 ### `simulate_harvest` — 3 branches
-1. `prefab in data.plants` → roll loot table (or direct item if no table)
-2. `prefab.startswith("Event_LakeCottage_HarvestAway_")` → fallback currency
+1. `prefab in data.plants` → roll loot table (or direct item if no table); **HarvestAway_N cascades**: after processing _N, also processes _N-1 … _1 (each with same n_items tiles). Uses `_get_harvest_away_cascade` + `_apply_plant_to_inventory` helpers.
+2. `prefab.startswith("Event_LakeCottage_HarvestAway_")` → fallback currency (old-format items not in plants)
 3. `prefab in currency_chain or points_chain` → direct pickup
+
+### HarvestAway cascade mechanic
+- **Cascade only for `Event_LakeCottage_HarvestAway_N`** (starts with `HARVEST_AWAY_PREFIX`). Other HarvestAway prefabs (AncientObject, CompFlower, CosmicFountain, IceThrone) do NOT cascade even though they appear in zone compositions.
+- `Event_LakeCottage_HarvestAway_N` fully harvested → transforms to `HarvestAway_{N-1}` → … → `HarvestAway_1` → gone
+- Always assume player does all possible harvests
+- `_get_harvest_away_cascade(prefab, plants)` — detects numeric suffix, returns lower levels present in plants
+- `HarvestAway_Huge` — no cascade (non-numeric suffix)
 
 ### Puzzle zone tile handling
 - HarvestAway tiles → harvested via `simulate_harvest` (branch 1)
 - Brambles → harvested via `simulate_harvest` (branch 1)
 - Competition_* tiles → puzzle unlock mechanic
-- PlainGrass → ignored (no loot table result)
+- PlainGrass/2/3 → 3 tiles merge → 1 level-1 point item (`floor(n // 3)` × `points_chain.items[0]`)
 - Points/Currency direct tiles → direct pickup (branch 3)
 
 ## FullRunResult fields (simulation.py)
@@ -93,6 +103,7 @@ Returns only the FIRST puzzle zone after a grindy zone.
 - `zone_chain_blockers` — **all zone types** → {chain_display_name: count} — covers grindy (100% grind failed) and puzzle (chain below X%)
 - `zone_puzzle_extra_grind` — puzzle zone → per-player list of (grinding_pct − discovery_only_pct)
 - `zone_puzzle_chain_sources` — puzzle zone → chain_key → {`bramble`: [base_units/player], `other`: [base_units/player]}
+- `zone_harvest_efficiency` — zone → per-player ratio (cumulative_actual / cumulative_possible up to that zone)
 
 ## `_compute_chain_base_units(items, chains) → dict[str, int]`
 Base units: `count × 3^level` (level = index in chain.items). chain_key = chain.items[0].
@@ -110,11 +121,14 @@ Level 1 item = 3 units, level 2 = 9 units. Used for source breakdown tracking.
 4. **Extra Grind for Puzzle Zones** — box plots of (grinding_pct − discovery_only_pct) per puzzle zone
 5. **Chain Item Sources per Puzzle Zone** — table: median base units from bramble vs other, per chain
 6. **Healing Power Percentiles per Zone** — table p5–p95 × zone, Life Orbs
-- Sidebar: Players (500–10k), Required Puzzle Completion %
+7. **Harvest Efficiency per Zone** — table p5–p95 × zone, cumulative_actual/cumulative_possible ratio. Grindy zones use grinding_pct; puzzle/start use 1.0. Only HarvestAway+Bramble tiles counted. LakeCottage HarvestAway cascade charges included in denominator.
+8. **Time to Complete Each Zone** — cumulative harvest time percentile table, divided by n_dragons
+- Sidebar: Players (500–10k), Required Puzzle Completion %, Dragons (1–5)
 
-## Performance note
-`_try_build_n_items` (recursive merge builder) is the bottleneck at high completion %.
-At 50%: ~0.056s/player. At 80%: ~0.33s/player. Use ≤50% or ≤500 players for fast runs.
+## Performance
+Binary search uses `_count_openable_tiles_analytical` (O(chains×levels)) instead of `attempt_puzzle_zone` (O(tiles×recursion)).
+At 50%: ~7ms/player. At 80%: ~9ms/player. 10,000 players @ 80% ≈ 1.5 minutes (was ~55 min, 37x speedup).
+`attempt_puzzle_zone` still used for actual puzzle zone execution (modifies inventory).
 
 ## Constants
 - `CURRENCY_MERGE_RATIO = 2.5`

@@ -6,7 +6,8 @@ EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
 def test_parse_zones_count():
     data = load_data(EXCEL)
-    assert set(data.zones.keys()) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+    # Balance sheet contains all zones (1-25); at minimum zones 1-9 must be present
+    assert {1, 2, 3, 4, 5, 6, 7, 8, 9}.issubset(data.zones.keys())
 
 
 def test_zone_types():
@@ -129,13 +130,14 @@ def test_currency_chain():
 
 def test_zone_unlocks_parsed():
     data = load_data(EXCEL)
-    assert data.zone_unlocks[2].required_currency_level == 4
-    assert data.zone_unlocks[4].required_currency_level == 7
-    assert data.zone_unlocks[6].required_currency_level == 9
-    assert data.zone_unlocks[8].required_currency_level == 10
+    # zone N >= 3 requires Discovery level N (zone N = level N rule)
+    assert data.zone_unlocks[1].required_currency_level is None
+    assert data.zone_unlocks[3].required_currency_level == 3
+    assert data.zone_unlocks[4].required_currency_level == 4
+    assert data.zone_unlocks[6].required_currency_level == 6
+    assert data.zone_unlocks[9].required_currency_level == 9
 
 
 def test_zones_without_unlock():
     data = load_data(EXCEL)
-    for zone_id in [1, 3, 5, 7, 9]:
-        assert data.zone_unlocks[zone_id].required_currency_level is None
+    assert data.zone_unlocks[1].required_currency_level is None
