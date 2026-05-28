@@ -151,8 +151,17 @@ def load_data(
 
 # ── Zone parsing ──────────────────────────────────────────────────────────────
 
+_BALANCE_SHEET_NAMES = [
+    "Copy of Level_Event_LakeCottage",
+    "Level_Event_LakeCottage_Balance",
+]
+
+
 def _parse_zones(wb) -> dict[int, ZoneData]:
-    ws = wb["Level_Event_LakeCottage_Balance"]
+    sheet_name = next((s for s in _BALANCE_SHEET_NAMES if s in wb.sheetnames), None)
+    if sheet_name is None:
+        raise ValueError(f"No zone layout sheet found. Expected one of: {_BALANCE_SHEET_NAMES}")
+    ws = wb[sheet_name]
     rows = list(ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True))
 
     zone_types = rows[0]
