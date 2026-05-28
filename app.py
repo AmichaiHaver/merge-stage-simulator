@@ -126,6 +126,7 @@ with st.spinner(f"Simulating {n_players:,} players through the full event…"):
 _PCTS = [5, 10, 25, 50, 75, 90, 95]
 non_fog_zone_ids = sorted(z for z in data.zones if data.zones[z].zone_type not in ("Fog",))
 st.caption(f"DEBUG2 — score p50: {result.score_percentiles.get('p50', 'N/A')}, zones_with_scores: {sorted(result.zone_scores.keys())}")
+st.caption(f"DEBUG3 — non_fog_zone_ids: {non_fog_zone_ids}, zone_types: { {z: data.zones[z].zone_type for z in sorted(data.zones)} }")
 zone_col_labels = {z: f"Z{z} ({data.zones[z].zone_type[0]})" for z in non_fog_zone_ids}
 
 
