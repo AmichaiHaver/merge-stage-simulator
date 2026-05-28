@@ -92,7 +92,7 @@ active_files.append(f"Loot: {'uploaded' if loot_bytes else 'default'}")
 active_files.append(f"Objects: {'uploaded' if objects_bytes else 'default'}")
 active_files.append(f"GE Revamp: {'uploaded' if ge_revamp_bytes else 'default'}")
 st.caption(" · ".join(active_files))
-st.caption(f"DEBUG — zones: {len(data.zones)}, plants: {len(data.plants)}, chains: {len(data.chains)}, point_values: {len(data.point_values)}")
+st.caption(f"DEBUG — zones: {len(data.zones)}, plants: {len(data.plants)}, chains: {len(data.chains)}, point_values: {len(data.point_values)}, harvest_away_max_harvests: {get_harvest_away_max_harvests(data)}")
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 st.sidebar.header("Simulation Parameters")
@@ -125,6 +125,7 @@ with st.spinner(f"Simulating {n_players:,} players through the full event…"):
 
 _PCTS = [5, 10, 25, 50, 75, 90, 95]
 non_fog_zone_ids = sorted(z for z in data.zones if data.zones[z].zone_type not in ("Fog",))
+st.caption(f"DEBUG2 — score p50: {result.score_percentiles.get('p50', 'N/A')}, zones_with_scores: {sorted(result.zone_scores.keys())}")
 zone_col_labels = {z: f"Z{z} ({data.zones[z].zone_type[0]})" for z in non_fog_zone_ids}
 
 
