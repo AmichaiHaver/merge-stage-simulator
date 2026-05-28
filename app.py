@@ -120,7 +120,6 @@ with st.spinner(f"Simulating {n_players:,} players through the full event…"):
         puzzle_completion_pct=puzzle_completion_pct,
         harvest_away_max_harvests=harvest_away_max_harvests,
         n_players=n_players,
-        n_workers=os.cpu_count(),
     )
 
 _PCTS = [5, 10, 25, 50, 75, 90, 95]
