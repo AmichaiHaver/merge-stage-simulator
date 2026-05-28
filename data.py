@@ -123,6 +123,15 @@ def load_data(
                     loot_table_name=harvest_loot if harvest_loot else p.loot_table_name,
                     on_die=on_die,
                 )
+        for prefab, (charges, seconds, on_die, harvest_loot) in ge_overrides.items():
+            if prefab not in plants and harvest_loot:
+                plants[prefab] = Plant(
+                    prefab=prefab,
+                    harvest_time=seconds,
+                    max_harvests=charges,
+                    loot_table_name=harvest_loot,
+                    on_die=on_die,
+                )
 
     if is_new_layout and _ZONE_GATING_FORMAT:
         zone_unlocks = _parse_zone_unlocks_gating(layout_wb)
