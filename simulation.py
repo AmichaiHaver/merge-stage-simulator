@@ -1,9 +1,7 @@
 from __future__ import annotations
 import math
-import multiprocessing
 import os
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -876,45 +874,13 @@ def simulate_player_run(
     )
 
 
-def _run_batch(args: tuple) -> list[PlayerRunResult]:
-    data, puzzle_completion_pct, harvest_away_max_harvests, n, seed = args
-    rng = np.random.default_rng(seed)
-    return [
-        simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
-        for _ in range(n)
-    ]
-
-
 def build_full_run_results(
     data: GameData,
     puzzle_completion_pct: float,
     harvest_away_max_harvests: int,
     n_players: int,
-    n_workers: Optional[int] = None,
 ) -> FullRunResult:
-    effective_workers = n_workers if n_workers is not None else (os.cpu_count() or 1)
-    # Ensure ≥200 players per worker to amortize process-spawn overhead (~0.07s/worker)
-    effective_workers = max(1, min(effective_workers, n_players // 200))
-
-    base = n_players // effective_workers
-    remainder = n_players % effective_workers
-    batch_sizes = [base + (1 if i < remainder else 0) for i in range(effective_workers)]
-
-    ss = np.random.SeedSequence()
-    seeds = [int(s.generate_state(1)[0]) for s in ss.spawn(effective_workers)]
-    args_list = [
-        (data, puzzle_completion_pct, harvest_away_max_harvests, n, seed)
-        for n, seed in zip(batch_sizes, seeds)
-    ]
-
-    if effective_workers == 1:
-        all_runs: list[PlayerRunResult] = _run_batch(args_list[0])
-    else:
-        _fork_ctx = multiprocessing.get_context("fork")
-        with ProcessPoolExecutor(max_workers=effective_workers, mp_context=_fork_ctx) as pool:
-            batches = list(pool.map(_run_batch, args_list))
-        all_runs = [run for batch in batches for run in batch]
-
+    rng = np.random.default_rng()
     scores: list[float] = []
     zone_grind_pcts: dict[int, list[float]] = defaultdict(list)
     zone_scores: dict[int, list[float]] = defaultdict(list)
@@ -929,7 +895,8 @@ def build_full_run_results(
     zone_harvest_efficiency_agg: dict[int, list[float]] = defaultdict(list)
     zone_item_counts_agg: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
 
-    for run in all_runs:
+    for _ in range(n_players):
+        run = simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
         scores.append(run.final_score)
         for zone_id, pct in run.grinding_per_zone.items():
             zone_grind_pcts[zone_id].append(pct)
