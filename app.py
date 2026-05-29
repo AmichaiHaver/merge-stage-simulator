@@ -12,9 +12,7 @@ from simulation import build_full_run_results, FullRunResult, get_harvest_away_m
 st.set_page_config(page_title="Merge Stage Simulator", layout="wide")
 st.title("Merge Stage Simulator — LakeCottage")
 
-DEFAULT_LAYOUT_PATH    = "data/Discovery Event Layout Generator 001.xlsx"
-DEFAULT_LOOT_PATH      = "data/_Data_Loot - Event LakeCottage.xlsx"
-DEFAULT_OBJECTS_PATH   = "data/_Data_Objects - Event LakeCottage.xlsx"
+DEFAULT_LAYOUT_PATH    = "data/Discovery Event Layout Generator 002.xlsx"
 DEFAULT_GE_REVAMP_PATH = "data/GE Revamp Data Editor.xlsx"
 
 # ── File upload section ────────────────────────────────────────────────────────
@@ -23,18 +21,10 @@ with st.expander("📂 Data Files", expanded=True):
         "Upload Excel files to run the simulation. "
         "Leave empty to use the built-in default files."
     )
-    col_l, col_lo, col_o, col_ge = st.columns(4)
+    col_l, col_ge = st.columns(2)
     uploaded_layout = col_l.file_uploader(
         "Layout Generator (.xlsx)", type=["xlsx"], key="layout_file",
         help="Discovery Event Layout Generator file",
-    )
-    uploaded_loot = col_lo.file_uploader(
-        "Loot Data (.xlsx)", type=["xlsx"], key="loot_file",
-        help="_Data_Loot - Event LakeCottage file",
-    )
-    uploaded_objects = col_o.file_uploader(
-        "Objects Data (.xlsx)", type=["xlsx"], key="objects_file",
-        help="_Data_Objects - Event LakeCottage file",
     )
     uploaded_ge_revamp = col_ge.file_uploader(
         "GE Revamp Data Editor (.xlsx)", type=["xlsx"], key="ge_revamp_file",
@@ -43,7 +33,7 @@ with st.expander("📂 Data Files", expanded=True):
 
 
 _DEFAULTS_EXIST = all(os.path.exists(p) for p in [
-    DEFAULT_LAYOUT_PATH, DEFAULT_LOOT_PATH, DEFAULT_OBJECTS_PATH, DEFAULT_GE_REVAMP_PATH
+    DEFAULT_LAYOUT_PATH, DEFAULT_GE_REVAMP_PATH
 ])
 
 
@@ -55,41 +45,29 @@ def _read_bytes(f) -> bytes | None:
 
 
 @st.cache_resource
-def get_data(layout_hash: str, loot_hash: str, objects_hash: str, ge_revamp_hash: str,
-             layout_bytes, loot_bytes, objects_bytes, ge_revamp_bytes):
+def get_data(layout_hash: str, ge_revamp_hash: str, layout_bytes, ge_revamp_bytes):
     layout_src    = io.BytesIO(layout_bytes)    if layout_bytes    else DEFAULT_LAYOUT_PATH
-    loot_src      = io.BytesIO(loot_bytes)      if loot_bytes      else DEFAULT_LOOT_PATH
-    objects_src   = io.BytesIO(objects_bytes)   if objects_bytes   else DEFAULT_OBJECTS_PATH
     ge_revamp_src = io.BytesIO(ge_revamp_bytes) if ge_revamp_bytes else DEFAULT_GE_REVAMP_PATH
-    return load_data(layout_src, loot_src, objects_src, ge_revamp_src)
+    return load_data(layout_src, ge_revamp_src)
 
 
 layout_bytes    = _read_bytes(uploaded_layout)
-loot_bytes      = _read_bytes(uploaded_loot)
-objects_bytes   = _read_bytes(uploaded_objects)
 ge_revamp_bytes = _read_bytes(uploaded_ge_revamp)
 
 if not _DEFAULTS_EXIST:
     missing = []
     if not layout_bytes:    missing.append("Layout Generator")
-    if not loot_bytes:      missing.append("Loot Data")
-    if not objects_bytes:   missing.append("Objects Data")
     if not ge_revamp_bytes: missing.append("GE Revamp Data Editor")
     if missing:
-        st.warning(f"Please upload all 4 Excel files to run the simulation.\n\nMissing: {', '.join(missing)}")
+        st.warning(f"Please upload both Excel files to run the simulation.\n\nMissing: {', '.join(missing)}")
         st.stop()
 
-layout_hash    = hashlib.md5(layout_bytes).hexdigest()    if layout_bytes    else "default_001"
-loot_hash      = hashlib.md5(loot_bytes).hexdigest()      if loot_bytes      else "default_loot"
-objects_hash   = hashlib.md5(objects_bytes).hexdigest()   if objects_bytes   else "default_objects"
+layout_hash    = hashlib.md5(layout_bytes).hexdigest()    if layout_bytes    else "default_002"
 ge_revamp_hash = hashlib.md5(ge_revamp_bytes).hexdigest() if ge_revamp_bytes else "default_ge_revamp"
 
-data = get_data(layout_hash, loot_hash, objects_hash, ge_revamp_hash,
-                layout_bytes, loot_bytes, objects_bytes, ge_revamp_bytes)
+data = get_data(layout_hash, ge_revamp_hash, layout_bytes, ge_revamp_bytes)
 
-active_files = [f"Layout: {'uploaded' if layout_bytes else 'default (001)'}"]
-active_files.append(f"Loot: {'uploaded' if loot_bytes else 'default'}")
-active_files.append(f"Objects: {'uploaded' if objects_bytes else 'default'}")
+active_files = [f"Layout: {'uploaded' if layout_bytes else 'default (002)'}"]
 active_files.append(f"GE Revamp: {'uploaded' if ge_revamp_bytes else 'default'}")
 st.caption(" · ".join(active_files))
 
@@ -144,6 +122,19 @@ def _pct_table(value_map: dict[int, list[float]], fmt: str = "{:,.0f}") -> pd.Da
 # ── Score percentiles per zone ─────────────────────────────────────────────────
 st.subheader("Score Percentiles per Zone")
 st.dataframe(_pct_table(result.zone_scores), hide_index=False, use_container_width=True)
+
+# ── Max Discovery Item Level per Zone ────────────────────────────────────────
+st.divider()
+st.subheader("Max Discovery Item Level per Zone (after merging)")
+st.caption(
+    "Highest-level currency item each player can hold after merging all discovery items in inventory. "
+    "Level 1 = base item. Merges: 5→2 preferred, then 3→1 on remainder."
+)
+_disc_levels: dict[int, list[float]] = {
+    z: [float(v) for v in vals]
+    for z, vals in result.zone_max_discovery_level.items()
+}
+st.dataframe(_pct_table(_disc_levels, fmt="{:.0f}"), hide_index=False, use_container_width=True)
 
 # ── Harvest Efficiency per Zone ───────────────────────────────────────────────
 st.divider()
@@ -227,6 +218,31 @@ if all_zone_ids_with_blockers:
         st.info("No chain blockers recorded.")
 else:
     st.info("No chain blockers recorded.")
+
+
+# ── Players Stuck per Zone ─────────────────────────────────────────────────────
+st.divider()
+st.subheader("Players Stuck per Zone")
+st.caption(
+    "Grindy zones where even 100% grind was insufficient. "
+    "These players did not advance to subsequent zones."
+)
+
+n_players_total = len(result.scores)
+if result.zone_stuck_counts:
+    stuck_rows = []
+    for z in sorted(result.zone_stuck_counts.keys()):
+        n_stuck = result.zone_stuck_counts[z]
+        zone_type = data.zones[z].zone_type if z in data.zones else "?"
+        stuck_rows.append({
+            "Zone": f"Z{z} ({zone_type[0]})",
+            "Players Stuck": n_stuck,
+            "% of All Players": f"{100 * n_stuck / n_players_total:.1f}%",
+        })
+    _stuck_df = pd.DataFrame(stuck_rows).set_index("Zone")
+    st.dataframe(_stuck_df, hide_index=False, use_container_width=True)
+else:
+    st.info("No players got stuck (100% grind was always sufficient).")
 
 
 # ── Chain Source Breakdown per Puzzle Zone ─────────────────────────────────────

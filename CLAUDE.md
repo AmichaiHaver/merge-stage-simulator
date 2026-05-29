@@ -14,7 +14,7 @@ Simulates N players end-to-end through all zones. Shows score percentiles, grind
 ## Data files (data/)
 | File | Role |
 |------|------|
-| `Discovery Event Layout Generator 001.xlsx` | Zone structure, Item DB, Zone Gates, Generator LootTable |
+| `Discovery Event Layout Generator 002.xlsx` | Zone structure, Item DB, Zone Gates, Generator LootTable |
 | `_Data_Loot - Event LakeCottage.xlsx` | Loot tables for generators |
 | `_Data_Objects - Event LakeCottage.xlsx` | HarvestAway definitions, point values |
 | `GE Revamp Data Editor.xlsx` | Harvest charges, seconds, on_die, **loot tables** per prefab (overrides Objects + Layout loot) |
@@ -22,7 +22,7 @@ Simulates N players end-to-end through all zones. Shows score percentiles, grind
 Defaults loaded automatically. User can override via file upload in UI.
 HarvestAway max_harvests = **3** (read from Objects file col 108, not hardcoded).
 
-## Zone structure (Layout 001)
+## Zone structure (Layout 002)
 | Zone | Type          | Tiles | Unlock     |
 |------|---------------|-------|------------|
 | 1    | Start         | 23    | —          |
@@ -49,13 +49,14 @@ Returns `PlayerRunResult` dataclass (not tuple).
      2. `grinding_pct` — binary search for minimum grind to satisfy unlock + puzzle X% completion
      3. `extra_grind = grinding_pct - discovery_only_pct` stored in `zone_puzzle_extra_grind[pz_id]`
      4. `for…else` records chain bottleneck list when 100% insufficient
-   - Otherwise (Puzzle/Start/Fog):
+   - Otherwise (Puzzle/Puzzle/Grindy/Start/Fog):
      1. Snapshot `pre_puzzle_chain_units` from current inventory
      2. Apply cached harvest (`inv_delta`); compute `bramble_chain_units` from `inv_delta`
-     3. `attempt_puzzle_zone` — returns `(opened, chain_opened, chain_total)`
+     3. If Puzzle or Puzzle/Grindy: `attempt_puzzle_zone` — returns `(opened, chain_opened, chain_total)`
      4. Record per-chain blockers: all chains where `opened[c] < ceil(total[c] × X%)`
      5. Check discovery (Currency unlock for next zone) → add "Currency" blocker if missing
      6. Store `zone_puzzle_chain_sources[zone_id][chain_key] = {bramble, other}`
+   - Note: "Puzzle/Grindy" (zone 8) — no binary search grind; harvested 100%; Competition tiles handled via attempt_puzzle_zone. Items (e.g. Competition_Tower) come from zone's own IceThrone HarvestAway loot tables.
 3. After each zone → compute score + healing
 
 ### `zone_blocker_map: dict[int, list[str]]`
@@ -129,6 +130,9 @@ Level 1 item = 3 units, level 2 = 9 units. Used for source breakdown tracking.
 Binary search uses `_count_openable_tiles_analytical` (O(chains×levels)) instead of `attempt_puzzle_zone` (O(tiles×recursion)).
 At 50%: ~7ms/player. At 80%: ~9ms/player. 10,000 players @ 80% ≈ 1.5 minutes (was ~55 min, 37x speedup).
 `attempt_puzzle_zone` still used for actual puzzle zone execution (modifies inventory).
+
+## Scoring model
+`_compute_score`: greedy 5→2 merge bottom-up, then `merged[items[-1]] * 1000`. Only top-level item scores; lower levels = 0 (intermediate merge steps only).
 
 ## Constants
 - `CURRENCY_MERGE_RATIO = 2.5`

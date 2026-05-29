@@ -21,6 +21,48 @@ LIFE_ORB_HEALING_POWER = {
 }
 
 
+def _auto_merge_inventory(inventory: dict[str, int], data: GameData) -> dict[str, int]:
+    """Eager merge: whenever a non-max-level item reaches 10+, do as many 5→2 merges as possible.
+    Only applies to currency and points chains — NOT competition chains.
+    Competition items (flower, ancient_object, etc.) must stay at their original level so
+    puzzle zones can unlock matching-level tiles; merging them up destroys that ability
+    since items cannot be split back down."""
+    inv = dict(inventory)
+    # Deliberately exclude data.chains (Competition items) — only merge currency + points
+    auto_merge_chains = [data.currency_chain, data.points_chain]
+    changed = True
+    while changed:
+        changed = False
+        for chain in auto_merge_chains:
+            items = chain.items
+            for i in range(len(items) - 1):  # skip last = max level
+                count = inv.get(items[i], 0)
+                if count >= 10:
+                    merges = count // 5
+                    inv[items[i]] = count - merges * 5
+                    inv[items[i + 1]] = inv.get(items[i + 1], 0) + merges * 2
+                    changed = True
+    return inv
+
+
+def _max_currency_level(snapshot: dict[str, int], currency_chain) -> int:
+    """Highest level (1-indexed) achievable by merging all currency items in snapshot.
+    Merges bottom-up: 5→2 preferred, then 3→1 on remainder."""
+    items = currency_chain.items
+    counts = [snapshot.get(item, 0) for item in items]
+    for i in range(len(items) - 1):
+        if counts[i] >= 3:
+            merges_5 = counts[i] // 5
+            rem = counts[i] % 5
+            merges_3 = rem // 3
+            counts[i + 1] += merges_5 * 2 + merges_3
+            counts[i] = rem % 3
+    for i in range(len(items) - 1, -1, -1):
+        if counts[i] > 0:
+            return i + 1
+    return 0
+
+
 def _compute_healing_power(inventory: dict[str, int]) -> float:
     total = 0.0
     for prefab, count in inventory.items():
@@ -141,6 +183,7 @@ def simulate_harvest(
     rng: np.random.Generator,
 ) -> dict[str, int]:
     inventory: dict[str, int] = defaultdict(int)
+    chain_items: set[str] = {item for chain in data.chains for item in chain.items}
 
     for prefab, zone_pct in grindy_zone.composition.items():
         n_items = round((zone_pct / 100) * grindy_zone.tile_count * grinding_pct)
@@ -179,6 +222,11 @@ def simulate_harvest(
         elif (prefab in data.currency_chain.items
               or prefab in data.points_chain.items):
             # Currency / point items placed directly on the board — pick up as-is
+            inventory[prefab] += n_items
+
+        elif prefab in chain_items and grindy_zone.zone_type == "Grindy":
+            # Competition_* chain items placed directly on the board in grindy zones only.
+            # In puzzle zones these same prefabs are tiles to unlock, not items to collect.
             inventory[prefab] += n_items
 
     return dict(inventory)
@@ -293,7 +341,8 @@ def _compute_score(
             merged[items[i]] = count - merges * 5
             merged[items[i + 1]] = merged.get(items[i + 1], 0) + merges * 2
 
-    return sum(merged.get(prefab, 0) * val for prefab, val in point_values.items())
+    # Only the highest-level item scores points (1000 each); all lower levels = 0
+    return merged.get(items[-1], 0) * 1000
 
 
 def _downstream_puzzle_ids(grindy_zone_id: int, zones: dict[int, ZoneData]) -> list[int]:
@@ -608,6 +657,10 @@ class FullRunResult:
     # zone_id → per-player (cumulative_actual / cumulative_possible) up to this zone
     zone_item_counts: dict[int, dict[str, list[int]]]
     # zone_id → item_prefab → per-player count at end of zone (currency + puzzle chain items)
+    zone_stuck_counts: dict[int, int]
+    # grindy zone_id → number of players who got stuck there (100% grind insufficient)
+    zone_max_discovery_level: dict[int, list[int]]
+    # zone_id → per-player max currency level (1-indexed) achievable by merging all currency items
 
 
 @dataclass
@@ -627,6 +680,8 @@ class PlayerRunResult:
     # zone_id → {item_prefab: count} at end of zone (currency + puzzle chain items only)
     zone_harvest_efficiency: dict[int, float]
     # zone_id → cumulative_actual_harvests / cumulative_possible_harvests up to this zone
+    exhausted_zones: set[int]
+    # grindy zone_ids where 100% grind was insufficient — player did not advance past these
 
 
 def simulate_player_run(
@@ -669,11 +724,17 @@ def simulate_player_run(
     # Puzzle zone non-Competition harvest pre-simulated during grindy zone processing
     cached_puzzle_harvests: dict[int, dict[str, int]] = {}
 
+    exhausted_zones: set[int] = set()  # zones where player got stuck
+    first_stuck_zone: "int | None" = None  # lowest zone where player is stuck
     made_progress = True
     while made_progress:
         made_progress = False
         for zone_id in sorted(data.zones.keys()):
             if zone_id in completed_zones:
+                continue
+            if zone_id in exhausted_zones:
+                continue
+            if first_stuck_zone is not None and zone_id > first_stuck_zone:
                 continue
             zone = data.zones[zone_id]
             unlock = data.zone_unlocks.get(zone_id, ZoneUnlock(zone_id, None))
@@ -684,6 +745,7 @@ def simulate_player_run(
             # Physically merge currency items to produce the required unlock level
             inventory = _apply_currency_merge(inventory, unlock, data.currency_chain)
 
+            grind_exhausted = False
             if zone.zone_type == "Grindy":
                 downstream = _downstream_puzzle_ids(zone_id, data.zones)
 
@@ -704,7 +766,7 @@ def simulate_player_run(
                     for step in range(1, 21):
                         pct = step / 20
                         grindy_slice = {k: round(v * pct) for k, v in full_grindy_inv.items()}
-                        test_inv = _add_inventories(inventory, grindy_slice)
+                        test_inv = _auto_merge_inventory(_add_inventories(inventory, grindy_slice), data)
                         if all(
                             check_zone_unlock(
                                 test_inv,
@@ -716,16 +778,24 @@ def simulate_player_run(
                         ):
                             discovery_only_pct = pct
                             break
+                    else:
+                        # Even 100% grind can't produce discovery currency — player is stuck
+                        grind_exhausted = True
 
                 # Find minimum grinding % that lets the player complete downstream puzzle zone
                 grinding_pct = 1.0
                 for step in range(1, 21):
                     pct = step / 20
                     grindy_slice = {k: round(v * pct) for k, v in full_grindy_inv.items()}
-                    test_inv = _add_inventories(inventory, grindy_slice)
+                    # Unlock check: WITHOUT puzzle zone's own harvest — those tiles are only
+                    # available after passing the unlock gate, so cannot help satisfy it.
+                    test_inv_unlock = _auto_merge_inventory(_add_inventories(inventory, grindy_slice), data)
+                    # Puzzle completion check: WITH puzzle zone's own harvest (helps with puzzle)
+                    test_inv_puzzle = dict(test_inv_unlock)
                     for pz_id in downstream:
                         if pz_id in cached_puzzle_harvests:
-                            test_inv = _add_inventories(test_inv, cached_puzzle_harvests[pz_id])
+                            test_inv_puzzle = _add_inventories(test_inv_puzzle, cached_puzzle_harvests[pz_id])
+                    test_inv_puzzle = _auto_merge_inventory(test_inv_puzzle, data)
 
                     all_ok = bool(downstream)
                     for pz_id in downstream:
@@ -733,30 +803,31 @@ def simulate_player_run(
                             continue
                         pz = data.zones[pz_id]
                         if not check_zone_unlock(
-                            test_inv,
+                            test_inv_unlock,
                             data.zone_unlocks.get(pz_id, ZoneUnlock(pz_id, None)),
                             data.currency_chain,
                         ):
                             all_ok = False
                             break
-                        opened, _, chain_total = _count_openable_tiles_analytical(test_inv, pz, data.chains)
-                        total_tiles = sum(chain_total.values())
-                        required = math.ceil(total_tiles * puzzle_completion_pct) if total_tiles > 0 else 0
-                        if opened < required:
-                            all_ok = False
-                            break
+                        _, chain_opened_a, chain_total_a = attempt_puzzle_zone(dict(test_inv_puzzle), pz, data.chains)
+                        # Per-chain check: every chain must individually meet threshold
+                        for ck, ct in chain_total_a.items():
+                            if chain_opened_a.get(ck, 0) < math.ceil(ct * puzzle_completion_pct):
+                                all_ok = False
+                                break
 
                     if all_ok:
                         grinding_pct = pct
                         full_grindy_inv = grindy_slice
                         break
                 else:
-                    # Even 100% grind is insufficient — record which chain is the bottleneck
+                    # Even 100% grind is insufficient for puzzle completion — record bottleneck
                     if downstream:
-                        final_test = _add_inventories(inventory, full_grindy_inv)
+                        final_test = _auto_merge_inventory(_add_inventories(inventory, full_grindy_inv), data)
                         for pz_id in downstream:
                             if pz_id in cached_puzzle_harvests:
                                 final_test = _add_inventories(final_test, cached_puzzle_harvests[pz_id])
+                        final_test = _auto_merge_inventory(final_test, data)
                         for pz_id in downstream:
                             if pz_id not in data.zones:
                                 continue
@@ -768,17 +839,14 @@ def simulate_player_run(
                             ):
                                 zone_blocker_map[zone_id] = ["Currency"]
                                 break
-                            opened, chain_opened, chain_total = _count_openable_tiles_analytical(
-                                final_test, pz, data.chains
+                            _, chain_opened_f, chain_total_f = attempt_puzzle_zone(
+                                dict(final_test), pz, data.chains
                             )
-                            total_tiles = sum(chain_total.values())
-                            required = math.ceil(total_tiles * puzzle_completion_pct) if total_tiles > 0 else 0
-                            if opened < required:
-                                bottleneck = _get_bottleneck_chain(chain_opened, chain_total)
-                                zone_blocker_map[zone_id] = [
-                                    _chain_display_name(bottleneck) if bottleneck else "puzzle"
-                                ]
-                                break
+                            # Per-chain: find first failing chain
+                            for ck, ct in chain_total_f.items():
+                                if chain_opened_f.get(ck, 0) < math.ceil(ct * puzzle_completion_pct):
+                                    zone_blocker_map[zone_id] = [_chain_display_name(ck)]
+                                    break
 
                 # Store extra grind (puzzle completion cost beyond discovery) per downstream puzzle zone
                 extra = max(0.0, grinding_pct - discovery_only_pct)
@@ -786,6 +854,7 @@ def simulate_player_run(
                     zone_puzzle_extra_grind[pz_id] = extra
 
                 inventory = _add_inventories(inventory, full_grindy_inv)
+                inventory = _auto_merge_inventory(inventory, data)
                 max_inv = _add_inventories(max_inv, full_grindy_100)
                 grinding_per_zone[zone_id] = grinding_pct
 
@@ -802,30 +871,42 @@ def simulate_player_run(
 
                 bramble_chain_units = _compute_chain_base_units(inv_delta, data.chains) if data.chains else {}
                 inventory = _add_inventories(inventory, inv_delta)
+                inventory = _auto_merge_inventory(inventory, data)
                 max_inv = _add_inventories(max_inv, inv_delta)
 
                 # For puzzle zones: attempt to unlock Competition_* tiles
-                if zone.zone_type == "Puzzle" and data.chains:
-                    opened, chain_opened, chain_total = attempt_puzzle_zone(inventory, zone, data.chains)
+                if zone.zone_type in ("Puzzle", "Puzzle/Grindy") and data.chains:
+                    if zone_id == 2:
+                        # Zone 2: all tiles already unlocked — items go directly to inventory at no cost
+                        chain_opened: dict[str, int] = {}
+                        chain_total: dict[str, int] = {}
+                        for prefab, zone_pct in zone.composition.items():
+                            count = max(1, round((zone_pct / 100) * zone.tile_count))
+                            if count == 0:
+                                continue
+                            for chain in data.chains:
+                                if prefab in chain.items:
+                                    level = chain.items.index(prefab)
+                                    chain_key = chain.items[0]
+                                    item = chain.items[level]
+                                    inventory[item] = inventory.get(item, 0) + count
+                                    chain_total[chain_key] = chain_total.get(chain_key, 0) + count
+                                    chain_opened[chain_key] = chain_opened.get(chain_key, 0) + count
+                                    break
+                        inventory = _auto_merge_inventory(inventory, data)
+                        # no blockers, no stuck — all tiles free
+                    else:
+                        opened, chain_opened, chain_total = attempt_puzzle_zone(inventory, zone, data.chains)
 
-                    blockers: list[str] = []
-                    for chain_key, total in chain_total.items():
-                        per_chain_required = math.ceil(total * puzzle_completion_pct) if total > 0 else 0
-                        if chain_opened.get(chain_key, 0) < per_chain_required:
-                            blockers.append(_chain_display_name(chain_key))
+                        blockers: list[str] = []
+                        for chain_key, total in chain_total.items():
+                            per_chain_required = math.ceil(total * puzzle_completion_pct) if total > 0 else 0
+                            if chain_opened.get(chain_key, 0) < per_chain_required:
+                                blockers.append(_chain_display_name(chain_key))
 
-                    # Check discovery: does the player have the Currency unlock for the next zone?
-                    next_zone_id = zone_id + 1
-                    while next_zone_id in data.zones and data.zones[next_zone_id].zone_type not in ("Grindy", "Puzzle"):
-                        next_zone_id += 1
-                    if next_zone_id in data.zones:
-                        next_unlock = data.zone_unlocks.get(next_zone_id, ZoneUnlock(next_zone_id, None))
-                        if not check_zone_unlock(inventory, next_unlock, data.currency_chain):
-                            if "Currency" not in blockers:
-                                blockers.append("Currency")
-
-                    if blockers:
-                        zone_blocker_map[zone_id] = blockers
+                        if blockers:
+                            zone_blocker_map[zone_id] = blockers
+                            grind_exhausted = True  # puzzle completion threshold not met — player stuck
 
                     # Record chain source breakdown (bramble harvest vs prior zones)
                     if chain_total:
@@ -847,8 +928,13 @@ def simulate_player_run(
             if _cum_possible > 0:
                 zone_harvest_efficiency_map[zone_id] = cumulative_actual_harvests / _cum_possible
 
-            completed_zones.add(zone_id)
-            made_progress = True
+            if grind_exhausted:
+                exhausted_zones.add(zone_id)
+                if first_stuck_zone is None or zone_id < first_stuck_zone:
+                    first_stuck_zone = zone_id
+            else:
+                completed_zones.add(zone_id)
+                made_progress = True
             zone_score_map[zone_id] = _compute_score(inventory, data.point_values, data.points_chain)
             zone_healing_map[zone_id] = _compute_healing_power(inventory)
             zone_max_healing_map[zone_id] = _compute_healing_power(max_inv)
@@ -871,6 +957,7 @@ def simulate_player_run(
         zone_harvest_seconds=zone_harvest_seconds_map,
         zone_inventory_snapshot=zone_inventory_snapshot_map,
         zone_harvest_efficiency=zone_harvest_efficiency_map,
+        exhausted_zones=exhausted_zones,
     )
 
 
@@ -894,6 +981,8 @@ def build_full_run_results(
     zone_harvest_seconds_agg: dict[int, list[float]] = defaultdict(list)
     zone_harvest_efficiency_agg: dict[int, list[float]] = defaultdict(list)
     zone_item_counts_agg: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
+    zone_stuck_counts_agg: dict[int, int] = defaultdict(int)
+    zone_max_discovery_level_agg: dict[int, list[int]] = defaultdict(list)
 
     for _ in range(n_players):
         run = simulate_player_run(data, puzzle_completion_pct, harvest_away_max_harvests, rng)
@@ -922,6 +1011,11 @@ def build_full_run_results(
         for zone_id, snap in run.zone_inventory_snapshot.items():
             for prefab, count in snap.items():
                 zone_item_counts_agg[zone_id][prefab].append(count)
+            zone_max_discovery_level_agg[zone_id].append(
+                _max_currency_level(snap, data.currency_chain)
+            )
+        for zone_id in run.exhausted_zones:
+            zone_stuck_counts_agg[zone_id] += 1
 
     arr = np.array(scores)
     percentiles = {
@@ -945,4 +1039,6 @@ def build_full_run_results(
         zone_harvest_seconds=dict(zone_harvest_seconds_agg),
         zone_harvest_efficiency=dict(zone_harvest_efficiency_agg),
         zone_item_counts={z: dict(d) for z, d in zone_item_counts_agg.items()},
+        zone_stuck_counts=dict(zone_stuck_counts_agg),
+        zone_max_discovery_level=dict(zone_max_discovery_level_agg),
     )

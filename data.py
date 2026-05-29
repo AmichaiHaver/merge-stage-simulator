@@ -74,13 +74,9 @@ def _open_wb(src: Union[str, bytes, io.BytesIO]) -> openpyxl.Workbook:
 
 def load_data(
     layout_path: Union[str, bytes, io.BytesIO],
-    loot_path: Optional[Union[str, bytes, io.BytesIO]] = None,
-    objects_path: Optional[Union[str, bytes, io.BytesIO]] = None,
     ge_revamp_path: Optional[Union[str, bytes, io.BytesIO]] = None,
 ) -> GameData:
     layout_wb = _open_wb(layout_path)
-    loot_wb = _open_wb(loot_path) if loot_path is not None else None
-    objects_wb = _open_wb(objects_path) if objects_path is not None else None
     ge_revamp_wb = _open_wb(ge_revamp_path) if ge_revamp_path is not None else None
 
     _ZONE_GATES_SHEET = next(
@@ -91,22 +87,9 @@ def load_data(
 
     zones = _parse_zones(layout_wb)
     loot_tables = _parse_loot_layout(layout_wb)
-    if loot_wb:
-        loot_tables.update(_parse_loot_event(loot_wb))
-
-    if objects_wb:
-        plants = _parse_plants_objects(objects_wb)
-        # Supplement with layout plants for non-event items (brambles, etc.)
-        layout_plants = _parse_plants_layout(layout_wb, is_new_layout, loot_tables)
-        for k, v in layout_plants.items():
-            if k not in plants:
-                plants[k] = v
-        chains, currency_chain = _parse_chains(layout_wb, is_new_layout)
-        points_chain, point_values = _parse_points_objects(objects_wb, layout_wb, is_new_layout)
-    else:
-        plants = _parse_plants_layout(layout_wb, is_new_layout, loot_tables)
-        chains, currency_chain = _parse_chains(layout_wb, is_new_layout)
-        points_chain, point_values = _parse_points_layout(layout_wb, is_new_layout)
+    plants = _parse_plants_layout(layout_wb, is_new_layout, loot_tables)
+    chains, currency_chain = _parse_chains(layout_wb, is_new_layout)
+    points_chain, point_values = _parse_points_layout(layout_wb, is_new_layout)
 
     if ge_revamp_wb:
         loot_tables.update(_parse_loot_event(ge_revamp_wb))
@@ -161,8 +144,8 @@ def load_data(
 # ── Zone parsing ──────────────────────────────────────────────────────────────
 
 _BALANCE_SHEET_NAMES = [
-    "Copy of Level_Event_LakeCottage",
     "Level_Event_LakeCottage_Balance",
+    "Copy of Level_Event_LakeCottage",
 ]
 
 

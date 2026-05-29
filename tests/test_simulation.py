@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from data import load_data, ZoneData, MergeChain, ZoneUnlock
-from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, _compute_chain_base_units, simulate_player_run, build_full_run_results
+from data import load_data, ZoneData, MergeChain, ZoneUnlock, GameData
+from simulation import simulate_harvest, check_puzzle_completion, check_zone_unlock, _compute_chain_base_units, simulate_player_run, build_full_run_results, _auto_merge_inventory
 
 EXCEL = "data/Discovery Event Layout Generator.xlsx"
 
@@ -157,11 +157,8 @@ def test_puzzle_extra_grind_tracked(game_data):
 
 
 def test_puzzle_zone_blockers_recorded():
-    # Use full 3-file data so loot tables produce currency and players reach puzzle zones
     full_data = load_data(
-        "data/Discovery Event Layout Generator 001.xlsx",
-        "data/_Data_Loot - Event LakeCottage.xlsx",
-        "data/_Data_Objects - Event LakeCottage.xlsx",
+        "data/Discovery Event Layout Generator 002.xlsx",
     )
     rng = np.random.default_rng(seed=7)
     # Use 100% completion — very hard, most chains will be blockers
@@ -175,9 +172,7 @@ def test_puzzle_zone_blockers_recorded():
 
 def test_puzzle_chain_sources_tracked():
     full_data = load_data(
-        "data/Discovery Event Layout Generator 001.xlsx",
-        "data/_Data_Loot - Event LakeCottage.xlsx",
-        "data/_Data_Objects - Event LakeCottage.xlsx",
+        "data/Discovery Event Layout Generator 002.xlsx",
     )
     rng = np.random.default_rng(seed=3)
     run = simulate_player_run(full_data, puzzle_completion_pct=0.5,
@@ -193,30 +188,136 @@ def test_puzzle_chain_sources_tracked():
 
 
 
-# --- build_full_run_results parallel tests ---
+# --- build_full_run_results tests ---
 
 @pytest.fixture(scope="module")
 def full_data():
     return load_data(
-        "data/Discovery Event Layout Generator 001.xlsx",
-        "data/_Data_Loot - Event LakeCottage.xlsx",
-        "data/_Data_Objects - Event LakeCottage.xlsx",
+        "data/Discovery Event Layout Generator 002.xlsx",
     )
 
 
-def test_parallel_build_returns_correct_player_count(full_data):
-    result = build_full_run_results(full_data, 0.5, 3, n_players=40, n_workers=2)
+@pytest.fixture(scope="module")
+def full_data_ge():
+    return load_data(
+        "data/Discovery Event Layout Generator 002.xlsx",
+        "data/GE Revamp Data Editor.xlsx",
+    )
+
+
+def test_zone3_grind_produces_enough_currency_to_unlock_zone4(full_data_ge):
+    """Zone 3 binary search must not rely on zone 4's own Currency tiles to satisfy
+    zone 4's unlock requirement — those tiles aren't available until AFTER the unlock check."""
+    # Run multiple seeds: at least some players should reach zone 4
+    reached = sum(
+        1 for seed in range(20)
+        if 4 in simulate_player_run(full_data_ge, 0.5, 3, np.random.default_rng(seed)).completed_zones
+    )
+    assert reached > 0, "No players reached zone 4 — zone 3 binary search under-grinds (currency bug)"
+
+
+def test_build_returns_correct_player_count(full_data):
+    result = build_full_run_results(full_data, 0.5, 3, n_players=40)
     assert len(result.scores) == 40
 
 
-def test_parallel_build_has_all_percentile_keys(full_data):
-    result = build_full_run_results(full_data, 0.5, 3, n_players=20, n_workers=2)
+def test_build_has_all_percentile_keys(full_data):
+    result = build_full_run_results(full_data, 0.5, 3, n_players=20)
     for key in ["p5", "p10", "p25", "p50", "p75", "p90", "p95"]:
         assert key in result.score_percentiles
 
 
-def test_parallel_and_sequential_same_output_shape(full_data):
-    r1 = build_full_run_results(full_data, 0.5, 3, n_players=30, n_workers=1)
-    r2 = build_full_run_results(full_data, 0.5, 3, n_players=30, n_workers=3)
-    assert len(r1.scores) == len(r2.scores)
-    assert set(r1.zone_grind_pcts.keys()) == set(r2.zone_grind_pcts.keys())
+def test_build_zone_data_populated(full_data):
+    result = build_full_run_results(full_data, 0.5, 3, n_players=30)
+    assert len(result.zone_grind_pcts) > 0
+    assert len(result.zone_scores) > 0
+
+
+def _make_minimal_game_data(chains: list[MergeChain]) -> GameData:
+    empty_chain = MergeChain(name="empty", items=[])
+    return GameData(
+        zones={},
+        plants={},
+        loot_tables={},
+        chains=chains,
+        currency_chain=empty_chain,
+        zone_unlocks={},
+        points_chain=empty_chain,
+        point_values={},
+    )
+
+
+def test_competition_tiles_in_grindy_zone_give_direct_pickup():
+    """Competition_* items in grindy zone composition must go directly into inventory."""
+    chain = MergeChain(name="ancient_object", items=[
+        "Competition_ancient_object_1",
+        "Competition_ancient_object_2",
+        "Competition_ancient_object_3",
+    ])
+    data = _make_minimal_game_data([chain])
+    zone = ZoneData(
+        zone_id=3,
+        zone_type="Grindy",
+        tile_count=10,
+        composition={"Competition_ancient_object_1": 100.0},
+    )
+    rng = np.random.default_rng(0)
+    inv = simulate_harvest(zone, 1.0, 3, data, rng)
+    assert inv.get("Competition_ancient_object_1", 0) == 10
+
+
+def test_competition_tiles_partial_grind_scales():
+    chain = MergeChain(name="flower", items=[
+        "Competition_flower_1",
+        "Competition_flower_2",
+        "Competition_flower_3",
+    ])
+    data = _make_minimal_game_data([chain])
+    zone = ZoneData(
+        zone_id=3,
+        zone_type="Grindy",
+        tile_count=20,
+        composition={"Competition_flower_3": 100.0},
+    )
+    rng = np.random.default_rng(0)
+    inv_50 = simulate_harvest(zone, 0.5, 3, data, rng)
+    inv_100 = simulate_harvest(zone, 1.0, 3, data, rng)
+    assert inv_50.get("Competition_flower_3", 0) == 10
+    assert inv_100.get("Competition_flower_3", 0) == 20
+
+
+def test_competition_tiles_not_picked_up_in_puzzle_zone():
+    """Competition tiles in puzzle zones are tiles to unlock, not items to collect."""
+    chain = MergeChain(name="flower", items=[
+        "Competition_flower_1",
+        "Competition_flower_2",
+        "Competition_flower_3",
+    ])
+    data = _make_minimal_game_data([chain])
+    zone = ZoneData(
+        zone_id=4,
+        zone_type="Puzzle",
+        tile_count=10,
+        composition={"Competition_flower_2": 100.0},
+    )
+    rng = np.random.default_rng(0)
+    inv = simulate_harvest(zone, 1.0, 3, data, rng)
+    assert inv.get("Competition_flower_2", 0) == 0
+
+
+def test_auto_merge_does_not_merge_competition_chain_items():
+    """Competition chain items must not be auto-merged — merging to high levels
+    destroys ability to unlock lower-level puzzle tiles (no splitting back down)."""
+    chain = MergeChain(name="flower", items=[
+        "Competition_flower_1",
+        "Competition_flower_2",
+        "Competition_flower_3",
+        "Competition_flower_4",
+    ])
+    data = _make_minimal_game_data([chain])
+    # 20 flower_1 items — above the auto-merge threshold of 10
+    inv = {"Competition_flower_1": 20}
+    merged = _auto_merge_inventory(inv, data)
+    # flower_1 must NOT be merged up (would destroy unlock ability for flower_2/3 tiles)
+    assert merged.get("Competition_flower_1", 0) == 20
+    assert merged.get("Competition_flower_2", 0) == 0
