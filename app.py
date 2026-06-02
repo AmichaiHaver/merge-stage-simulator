@@ -293,18 +293,24 @@ st.dataframe(_pct_table(result.zone_max_healing_power), hide_index=False, use_co
 st.divider()
 st.subheader("Time to Complete Each Zone")
 st.caption(
-    f"Harvest time per zone (players who reached it) with {n_dragons} dragon(s). "
+    f"Cumulative harvest time up to each zone with {n_dragons} dragon(s). "
     "Parallel dragons divide harvest time. Does not include travel / merge time."
 )
 
 _time_zone_ids = [z for z in non_fog_zone_ids if z in result.zone_harvest_seconds and result.zone_harvest_seconds[z]]
 if _time_zone_ids:
-    # Per-zone harvest time (players who reached each zone)
-    _zone_time: dict[int, np.ndarray] = {}
+    n = len(result.scores)
+
+    # Cumulative per-player time. Stop at first zone where not all players have data
+    # (alignment lost — can't sum arrays of different lengths).
+    _zone_cumulative: dict[int, np.ndarray] = {}
+    _running = np.zeros(n)
     for z in _time_zone_ids:
         arr = np.array(result.zone_harvest_seconds[z])
-        if len(arr) > 0:
-            _zone_time[z] = arr / n_dragons
+        if len(arr) != n:
+            break
+        _running = _running + arr / n_dragons
+        _zone_cumulative[z] = _running.copy()
 
     def _fmt_time(secs: float) -> str:
         m = int(secs // 60)
@@ -315,8 +321,8 @@ if _time_zone_ids:
     for p in _PCTS:
         row: dict = {"Percentile": f"p{p}"}
         for z in _time_zone_ids:
-            if z in _zone_time:
-                row[zone_col_labels[z]] = _fmt_time(float(np.percentile(_zone_time[z], p)))
+            if z in _zone_cumulative:
+                row[zone_col_labels[z]] = _fmt_time(float(np.percentile(_zone_cumulative[z], p)))
         time_table_rows.append(row)
 
     _time_df = pd.DataFrame(time_table_rows).set_index("Percentile")
